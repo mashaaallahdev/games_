@@ -1,0 +1,20 @@
+# Environment variables & secrets
+.env
+
+# Video and audio outputs
+output/*.mp4
+output/*.wav
+output/*.jpg
+temp_*
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# System files
+.DS_Store
+Thumbs.db

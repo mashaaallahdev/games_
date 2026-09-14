@@ -1,0 +1,64 @@
+name: Autonomous Daily Reels Generator
+
+on:
+  # 1. Scheduled 4x Daily at Peak Facebook Hours (03:00, 09:00, 15:00, 21:00 UTC)
+  schedule:
+    - cron: '0 3,9,15,21 * * *'
+
+  # 2. Manual on-demand trigger from phone or PC browser
+  workflow_dispatch:
+    inputs:
+      game:
+        description: 'Which game to generate'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - neon_escape
+          - marble_arena
+          - plinko_multiplier
+      duration:
+        description: 'Video duration (seconds)'
+        required: true
+        default: '30'
+
+jobs:
+  generate-and-post:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install System Dependencies (FFmpeg & Xvfb for Headless Graphics)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsdl2-2.0-0
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Automated Generation & Telegram Delivery
+        env:
+          PYTHONUNBUFFERED: "1"
+          SDL_VIDEODRIVER: "dummy"
+          SDL_AUDIODRIVER: "dummy"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHAT_ID_PAGE1: ${{ secrets.TELEGRAM_CHAT_ID_PAGE1 }}
+          TELEGRAM_CHAT_ID_PAGE2: ${{ secrets.TELEGRAM_CHAT_ID_PAGE2 }}
+          TELEGRAM_CHAT_ID_PAGE3: ${{ secrets.TELEGRAM_CHAT_ID_PAGE3 }}
+        run: |
+          GAME_MODE="${{ github.event.inputs.game || 'all' }}"
+          DURATION="${{ github.event.inputs.duration || '30' }}"
+          echo "Triggering Reels automation for mode: $GAME_MODE with duration: ${DURATION}s"
+          python dispatcher.py --mode "$GAME_MODE" --duration "$DURATION"
