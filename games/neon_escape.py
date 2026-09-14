@@ -131,6 +131,30 @@ COLOR_THEMES = [
 ]
 
 # ==============================================================================
+# 7 PROCEDURAL WALL GEOMETRIES
+# Hexagon, Octagon, Square, Pentagon, Circle, Triangle, Dodecagon
+# ==============================================================================
+WALL_GEOMETRIES = [
+    "HEXAGON",
+    "OCTAGON",
+    "SQUARE",
+    "PENTAGON",
+    "CIRCLE",
+    "TRIANGLE",
+    "DODECAGON",
+]
+
+GEOMETRY_CONFIGS = {
+    "CIRCLE": {"radii": [180, 295, 420], "gaps": [65, 42, 28]},
+    "HEXAGON": {"radii": [165, 270, 395], "gaps": [60, 40, 26]},
+    "OCTAGON": {"radii": [175, 285, 410], "gaps": [55, 38, 25]},
+    "SQUARE": {"radii": [135, 225, 340], "gaps": [65, 44, 28]},
+    "PENTAGON": {"radii": [150, 250, 375], "gaps": [60, 40, 26]},
+    "TRIANGLE": {"radii": [115, 205, 330], "gaps": [75, 52, 34]},
+    "DODECAGON": {"radii": [180, 295, 420], "gaps": [55, 36, 24]},
+}
+
+# ==============================================================================
 # 4 WALL ARCHITECTURAL STYLES
 # ==============================================================================
 WALL_STYLES = [
@@ -175,22 +199,17 @@ class Particle:
 
 class MovingNeonWall:
     """
-    A rotating neon wall with an escape gap.
+    A rotating neon wall with an escape gap and arbitrary regular polygon geometry.
     Guarantees 100% mathematical unity between visual rendering and physics:
-    - Center is (center_x, center_y).
-    - Angular position theta in [0, 2*pi).
+    - Supported shapes: CIRCLE, HEXAGON, OCTAGON, SQUARE, PENTAGON, TRIANGLE, DODECAGON.
+    - Flat face reflection normal matches the geometric side orientation.
     - Gap is strictly [rotation, rotation + gap_radians].
-    - Solid wall is strictly [rotation + gap_radians, rotation + 2*pi].
-    - When escaped, gap_closed becomes True: wall permanently seals and becomes a solid ring.
-    - Architectural styles: CYBER_LASER, DOUBLE_NEON, DASHED_CIRCUIT, RUNIC_GEAR.
+    - When escaped, gap_closed becomes True: wall permanently seals into a solid closed polygon.
     """
-    def __init__(self, radius, thickness, gap_degrees, rot_speed, color, name="WALL", style="CYBER_LASER"):
+    def __init__(self, radius, thickness, gap_degrees, rot_speed, color, name="WALL", style="CYBER_LASER", shape="CIRCLE"):
         self.radius = float(radius)
         self.thickness = int(thickness)
         self.half_thick = self.thickness / 2.0
-        self.inner_radius = self.radius - self.half_thick
-        self.outer_radius = self.radius + self.half_thick
-
         self.gap_degrees = float(gap_degrees)
         self.gap_radians = math.radians(gap_degrees)
         self.rot_speed = float(rot_speed)
@@ -198,6 +217,7 @@ class MovingNeonWall:
         self.color = color
         self.name = name
         self.style = style
+        self.shape = shape
 
         self.gap_closed = False
         self.seal_anim = 0.0  # 1.0 when sealed, decays to 0.0
@@ -229,17 +249,57 @@ class MovingNeonWall:
         rel = (angle - self.rotation) % (2 * math.pi)
         return (margin_radians <= rel <= (self.gap_radians - margin_radians))
 
+    def get_radius(self, angle):
+        """Calculates distance from center to wall centerline at given angle for this geometry."""
+        if self.shape == "CIRCLE":
+            return self.radius
+        sides_map = {
+            "TRIANGLE": 3,
+            "SQUARE": 4,
+            "PENTAGON": 5,
+            "HEXAGON": 6,
+            "OCTAGON": 8,
+            "DODECAGON": 12,
+        }
+        n = sides_map.get(self.shape, 6)
+        sector = 2.0 * math.pi / n
+        rel = (angle - self.rotation) % (2.0 * math.pi)
+        side_idx = int(rel // sector)
+        phi = rel - (side_idx + 0.5) * sector
+        min_cos = 0.65 if self.shape == "TRIANGLE" else 0.50
+        return self.radius / max(min_cos, math.cos(phi))
+
+    def get_normal(self, angle):
+        """Calculates outward unit normal vector (nx, ny) at given angle for this geometry."""
+        if self.shape == "CIRCLE":
+            return math.cos(angle), math.sin(angle)
+        sides_map = {
+            "TRIANGLE": 3,
+            "SQUARE": 4,
+            "PENTAGON": 5,
+            "HEXAGON": 6,
+            "OCTAGON": 8,
+            "DODECAGON": 12,
+        }
+        n = sides_map.get(self.shape, 6)
+        sector = 2.0 * math.pi / n
+        rel = (angle - self.rotation) % (2.0 * math.pi)
+        side_idx = int(rel // sector)
+        mid_angle = self.rotation + (side_idx + 0.5) * sector
+        return math.cos(mid_angle), math.sin(mid_angle)
+
     def get_tip_positions(self, center_x, center_y):
         """Returns coordinates of Tip 1 (start) and Tip 2 (end) of the gap."""
-        t1_x = center_x + self.radius * math.cos(self.rotation)
-        t1_y = center_y + self.radius * math.sin(self.rotation)
+        r1 = self.get_radius(self.rotation)
+        t1_x = center_x + r1 * math.cos(self.rotation)
+        t1_y = center_y + r1 * math.sin(self.rotation)
         end_ang = self.rotation + self.gap_radians
-        t2_x = center_x + self.radius * math.cos(end_ang)
-        t2_y = center_y + self.radius * math.sin(end_ang)
+        r2 = self.get_radius(end_ang)
+        t2_x = center_x + r2 * math.cos(end_ang)
+        t2_y = center_y + r2 * math.sin(end_ang)
         return (t1_x, t1_y), (t2_x, t2_y)
 
     def draw(self, surface, center_x, center_y):
-        # Determine current primary color
         main_color = self.color
         if self.seal_anim > 0:
             flash_amt = self.seal_anim
@@ -250,97 +310,79 @@ class MovingNeonWall:
             )
 
         if self.gap_closed and self.seal_anim <= 0:
-            # -------------------------------------------------------------
-            # FULLY SEALED WALL: Complete unbroken ring
-            # -------------------------------------------------------------
             self._draw_full_ring(surface, center_x, center_y, main_color)
         else:
-            # -------------------------------------------------------------
-            # OPEN WALL: Arc with escape gap
-            # -------------------------------------------------------------
             self._draw_open_arc(surface, center_x, center_y, main_color)
-
-            # If currently sealing, draw laser bridge closing the gap!
             if self.seal_anim > 0:
                 self._draw_seal_bridge(surface, center_x, center_y)
 
     def _draw_full_ring(self, surface, center_x, center_y, color):
-        R = int(self.radius)
-        T = self.thickness
-        # Outer soft glow
-        glow_surf = pygame.Surface((R * 2 + T * 4, R * 2 + T * 4), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (*color, 45), (R + T * 2, R + T * 2), R + T // 2, T + 6)
-        surface.blit(glow_surf, (int(center_x - R - T * 2), int(center_y - R - T * 2)))
+        num_pts = 140
+        angles = np.linspace(0, 2 * math.pi, num_pts, endpoint=True)
+        pts = [(center_x + self.get_radius(a) * math.cos(a), center_y + self.get_radius(a) * math.sin(a)) for a in angles]
 
-        # Solid ring
-        pygame.draw.circle(surface, color, (int(center_x), int(center_y)), R, T)
-        # Bright core laser
-        pygame.draw.circle(surface, (255, 255, 255), (int(center_x), int(center_y)), R, max(2, T // 4))
+        # Solid neon wall
+        pygame.draw.lines(surface, color, True, pts, self.thickness)
+        # Bright laser core
+        pygame.draw.lines(surface, (255, 255, 255), True, pts, max(2, self.thickness // 4))
 
-        # Architectural style accents on sealed ring
         if self.style == "DOUBLE_NEON":
-            pygame.draw.circle(surface, (255, 255, 255), (int(center_x), int(center_y)), int(self.inner_radius), 2)
-            pygame.draw.circle(surface, (255, 255, 255), (int(center_x), int(center_y)), int(self.outer_radius), 2)
+            pts_in = [(center_x + (self.get_radius(a) - self.half_thick) * math.cos(a),
+                       center_y + (self.get_radius(a) - self.half_thick) * math.sin(a)) for a in angles[::2]]
+            pts_out = [(center_x + (self.get_radius(a) + self.half_thick) * math.cos(a),
+                        center_y + (self.get_radius(a) + self.half_thick) * math.sin(a)) for a in angles[::2]]
+            pygame.draw.lines(surface, (255, 255, 255), True, pts_in, 2)
+            pygame.draw.lines(surface, (255, 255, 255), True, pts_out, 2)
 
     def _draw_open_arc(self, surface, center_x, center_y, color):
-        # Arc strictly from (rotation + gap_radians) to (rotation + 2*pi)
         solid_start = self.rotation + self.gap_radians
         solid_end = self.rotation + 2 * math.pi
-        num_pts = 90
+        num_pts = 120
         angles = np.linspace(solid_start, solid_end, num_pts)
-
-        # Primary track points
-        pts = [(center_x + self.radius * math.cos(a), center_y + self.radius * math.sin(a)) for a in angles]
+        pts = [(center_x + self.get_radius(a) * math.cos(a), center_y + self.get_radius(a) * math.sin(a)) for a in angles]
 
         # Draw main neon arc
         pygame.draw.lines(surface, color, False, pts, self.thickness)
         # Inner white laser core line
         pygame.draw.lines(surface, (255, 255, 255), False, pts, max(2, self.thickness // 4))
 
-        # Style-specific visual accents
         if self.style == "DOUBLE_NEON":
-            pts_in = [(center_x + self.inner_radius * math.cos(a), center_y + self.inner_radius * math.sin(a)) for a in angles[::2]]
-            pts_out = [(center_x + self.outer_radius * math.cos(a), center_y + self.outer_radius * math.sin(a)) for a in angles[::2]]
+            pts_in = [(center_x + (self.get_radius(a) - self.half_thick) * math.cos(a),
+                       center_y + (self.get_radius(a) - self.half_thick) * math.sin(a)) for a in angles[::2]]
+            pts_out = [(center_x + (self.get_radius(a) + self.half_thick) * math.cos(a),
+                        center_y + (self.get_radius(a) + self.half_thick) * math.sin(a)) for a in angles[::2]]
             pygame.draw.lines(surface, (255, 255, 255), False, pts_in, 2)
             pygame.draw.lines(surface, (255, 255, 255), False, pts_out, 2)
-            # Struts
             for p1, p2 in zip(pts_in[::4], pts_out[::4]):
                 pygame.draw.line(surface, color, p1, p2, 2)
 
         elif self.style == "DASHED_CIRCUIT":
-            # Circuit notches along perimeter
             for a in angles[::5]:
-                nx = center_x + (self.outer_radius + 6) * math.cos(a)
-                ny = center_y + (self.outer_radius + 6) * math.sin(a)
-                mx = center_x + (self.outer_radius - 2) * math.cos(a)
-                my = center_y + (self.outer_radius - 2) * math.sin(a)
+                r_out = self.get_radius(a) + self.half_thick
+                nx = center_x + (r_out + 6) * math.cos(a)
+                ny = center_y + (r_out + 6) * math.sin(a)
+                mx = center_x + (r_out - 2) * math.cos(a)
+                my = center_y + (r_out - 2) * math.sin(a)
                 pygame.draw.line(surface, (255, 255, 255), (mx, my), (nx, ny), 3)
 
         elif self.style == "RUNIC_GEAR":
-            # Gear teeth / chevrons along perimeter
             for a in angles[::6]:
-                tx = center_x + (self.outer_radius + 8) * math.cos(a)
-                ty = center_y + (self.outer_radius + 8) * math.sin(a)
-                bx = center_x + self.radius * math.cos(a)
-                by = center_y + self.radius * math.sin(a)
+                r = self.get_radius(a)
+                tx = center_x + (r + self.half_thick + 8) * math.cos(a)
+                ty = center_y + (r + self.half_thick + 8) * math.sin(a)
+                bx = center_x + r * math.cos(a)
+                by = center_y + r * math.sin(a)
                 pygame.draw.line(surface, color, (bx, by), (tx, ty), 4)
 
-        # -------------------------------------------------------------
-        # GLOWING CAPS & BEACONS / SECURITY BARRIERS AT ESCAPE GAP
-        # -------------------------------------------------------------
+        # Glowing caps & security barriers at the tips
         tip1, tip2 = self.get_tip_positions(center_x, center_y)
         cap_rad = self.thickness // 2
-
-        # Tip 1 Cap
         pygame.draw.circle(surface, (255, 255, 255), (int(tip1[0]), int(tip1[1])), cap_rad)
         pygame.draw.circle(surface, color, (int(tip1[0]), int(tip1[1])), cap_rad + 3, 2)
-
-        # Tip 2 Cap
         pygame.draw.circle(surface, (255, 255, 255), (int(tip2[0]), int(tip2[1])), cap_rad)
         pygame.draw.circle(surface, color, (int(tip2[0]), int(tip2[1])), cap_rad + 3, 2)
 
         if not self.is_unlocked:
-            # Active security laser barrier across the locked gap
             pygame.draw.line(surface, (255, 50, 50), tip1, tip2, 4)
             pygame.draw.line(surface, (255, 200, 200), tip1, tip2, 2)
             mid_x = (tip1[0] + tip2[0]) / 2.0
@@ -348,26 +390,23 @@ class MovingNeonWall:
             pygame.draw.circle(surface, (255, 50, 50), (int(mid_x), int(mid_y)), 7)
             pygame.draw.circle(surface, (255, 255, 255), (int(mid_x), int(mid_y)), 3)
         else:
-            # Pulsing Escape Direction Beacon (Arrow/Chevron at unlocked portal)
             mid_ang = self.rotation + self.gap_radians / 2.0
-            beacon_x = center_x + self.radius * math.cos(mid_ang)
-            beacon_y = center_y + self.radius * math.sin(mid_ang)
+            r_mid = self.get_radius(mid_ang)
+            beacon_x = center_x + r_mid * math.cos(mid_ang)
+            beacon_y = center_y + r_mid * math.sin(mid_ang)
             pulse_r = int(self.thickness * 0.75 + math.sin(pygame.time.get_ticks() * 0.008) * 3)
             pygame.draw.circle(surface, (255, 255, 255), (int(beacon_x), int(beacon_y)), max(3, pulse_r), 2)
             pygame.draw.circle(surface, (0, 255, 220), (int(beacon_x), int(beacon_y)), max(1, pulse_r // 2))
 
     def _draw_seal_bridge(self, surface, center_x, center_y):
-        """Draws dynamic energetic laser bridge sealing the escape gap shut."""
         t1, t2 = self.get_tip_positions(center_x, center_y)
-        progress = 1.0 - self.seal_anim  # from 0 to 1
+        progress = 1.0 - self.seal_anim
         cur_end = self.rotation + self.gap_radians * progress
-        cur_x = center_x + self.radius * math.cos(cur_end)
-        cur_y = center_y + self.radius * math.sin(cur_end)
-
-        # Laser beam sealing the gap
+        r_cur = self.get_radius(cur_end)
+        cur_x = center_x + r_cur * math.cos(cur_end)
+        cur_y = center_y + r_cur * math.sin(cur_end)
         pygame.draw.line(surface, (255, 255, 255), t1, (cur_x, cur_y), self.thickness)
         pygame.draw.line(surface, self.color, t1, (cur_x, cur_y), self.thickness + 6)
-        # Searing hot weld spark at leading edge
         pygame.draw.circle(surface, (255, 255, 255), (int(cur_x), int(cur_y)), self.thickness)
 
 
@@ -384,13 +423,18 @@ class NeonEscapeGame:
         self.center_y = height // 2
 
         # -------------------------------------------------------------
-        # PROCEDURAL VARIETY: Unique Ball, Theme, Wall Style every run!
+        # PROCEDURAL VARIETY: Unique Ball, Theme, Wall Style & Geometry every run!
         # -------------------------------------------------------------
         self.ball = random.choice(BALL_TYPES)
         self.theme = random.choice(COLOR_THEMES)
         self.wall_style = random.choice(WALL_STYLES)
+        self.geometry = random.choice(WALL_GEOMETRIES)
 
-        print(f"[NeonEscape] Run Config -> Ball: {self.ball['name']} | Theme: {self.theme['name']} | Style: {self.wall_style}")
+        cfg = GEOMETRY_CONFIGS[self.geometry]
+        radii = cfg["radii"]
+        gaps = cfg["gaps"]
+
+        print(f"[NeonEscape] Run Config -> Geometry: {self.geometry} | Ball: {self.ball['name']} | Theme: {self.theme['name']} | Style: {self.wall_style}")
 
         # Ball physical parameters
         self.ball_radius = 16
@@ -404,16 +448,13 @@ class NeonEscapeGame:
         # Center core bumper
         self.core_radius = 42
 
-        # Moving Neon Walls with progressively narrower escape gaps:
-        # Ring 1: Radius 190, gap 65° (Wide, fast initial breakout)
-        # Ring 2: Radius 325, gap 40° (Medium, high tension)
-        # Ring 3: Radius 460, gap 25° (Narrow, thrilling climax)
+        # Moving Neon Walls with tailored geometry, radii and escape gaps
         rot_dir = 1 if random.random() < 0.5 else -1
         colors = self.theme["colors"]
         self.walls = [
-            MovingNeonWall(radius=190, thickness=16, gap_degrees=65, rot_speed=0.024 * rot_dir, color=colors[0], name="WALL 1", style=self.wall_style),
-            MovingNeonWall(radius=325, thickness=18, gap_degrees=40, rot_speed=-0.019 * rot_dir, color=colors[1], name="WALL 2", style=self.wall_style),
-            MovingNeonWall(radius=460, thickness=20, gap_degrees=25, rot_speed=0.015 * rot_dir, color=colors[2], name="WALL 3", style=self.wall_style),
+            MovingNeonWall(radius=radii[0], thickness=16, gap_degrees=gaps[0], rot_speed=0.024 * rot_dir, color=colors[0], name=f"{self.geometry} 1", style=self.wall_style, shape=self.geometry),
+            MovingNeonWall(radius=radii[1], thickness=18, gap_degrees=gaps[1], rot_speed=-0.019 * rot_dir, color=colors[1], name=f"{self.geometry} 2", style=self.wall_style, shape=self.geometry),
+            MovingNeonWall(radius=radii[2], thickness=20, gap_degrees=gaps[2], rot_speed=0.015 * rot_dir, color=colors[2], name=f"{self.geometry} 3", style=self.wall_style, shape=self.geometry),
         ]
         # Paced portal unlock schedules to guarantee maximum suspense and timely escape
         self.walls[0].unlock_time = self.duration_sec * 0.20
@@ -441,7 +482,7 @@ class NeonEscapeGame:
         self.last_bounce_frame = -99
 
         # UI Banner
-        self.banner_text = f"MISSION: ESCAPE THE {self.wall_style.replace('_', ' ')}"
+        self.banner_text = f"MISSION: ESCAPE THE {self.geometry} MAZE"
         self.banner_timer = 90
 
         # Fonts
@@ -450,10 +491,10 @@ class NeonEscapeGame:
         self.font_big = pygame.font.SysFont("Arial", 44, bold=True)
         self.font_sub = pygame.font.SysFont("Arial", 24, bold=True)
 
-    def _bounce_ball(self, norm_x, norm_y, radial_vel, t, note_freq=440.0, particle_color=None):
-        """Inverts radial velocity across normal, registers audio event and particles."""
-        self.ball_vx -= 2.0 * radial_vel * norm_x
-        self.ball_vy -= 2.0 * radial_vel * norm_y
+    def _bounce_ball(self, norm_x, norm_y, norm_vel, t, note_freq=440.0, particle_color=None):
+        """Inverts velocity component perpendicular to polygon face, registers audio and FX."""
+        self.ball_vx -= 2.0 * norm_vel * norm_x
+        self.ball_vy -= 2.0 * norm_vel * norm_y
         self.bounce_count += 1
         self.audio_events.append((t, note_freq, False))
         if particle_color:
@@ -466,8 +507,9 @@ class NeonEscapeGame:
         the approaching escape gap so pacing is guaranteed to be thrilling.
         """
         gap_mid = (wall.rotation + wall.gap_radians / 2.0) % (2 * math.pi)
-        target_x = self.center_x + wall.radius * math.cos(gap_mid)
-        target_y = self.center_y + wall.radius * math.sin(gap_mid)
+        r_mid = wall.get_radius(gap_mid)
+        target_x = self.center_x + r_mid * math.cos(gap_mid)
+        target_y = self.center_y + r_mid * math.sin(gap_mid)
         to_gap_x = target_x - self.ball_x
         to_gap_y = target_y - self.ball_y
         dist = math.hypot(to_gap_x, to_gap_y) + 1e-5
@@ -500,21 +542,13 @@ class NeonEscapeGame:
     def update_physics(self, t, frame_idx=0):
         """
         Sub-stepped continuous collision detection (8 steps per frame):
-        - Ball strictly bounces off solid neon walls with correct vector reflection.
+        - Ball strictly bounces off solid neon walls with correct polygon surface normal reflection.
         - Escapes ONLY happen when entering the exact angular gap.
         - When clearing a wall, that wall's gap permanently seals shut.
         - In Stage 3 (Escaped): ZERO outer walls! Ball flies freely off into space!
         """
         sub_steps = 8
         dt = 1.0 / sub_steps
-
-        # Guide ball towards unlocked portal for prompt and dramatic breakthrough
-        if self.stage == 0 and self.walls[0].is_unlocked:
-            self._guide_towards_gap(self.walls[0], strength=0.08 * dt)
-        elif self.stage == 1 and self.walls[1].is_unlocked:
-            self._guide_towards_gap(self.walls[1], strength=0.09 * dt)
-        elif self.stage == 2 and self.walls[2].is_unlocked:
-            self._guide_towards_gap(self.walls[2], strength=0.11 * dt)
 
         for _ in range(sub_steps):
             # Apply velocity
@@ -535,8 +569,25 @@ class NeonEscapeGame:
                     self.particles.append(Particle(self.ball_x, self.ball_y, self.ball["trail_color"], speed_mult=1.5, radius=6.0))
                 continue
 
+            # Director guidance towards open unlocked portal
+            if self.stage == 0 and self.walls[0].is_unlocked:
+                self._guide_towards_gap(self.walls[0], strength=0.28 * dt)
+            elif self.stage == 1 and self.walls[1].is_unlocked:
+                self._guide_towards_gap(self.walls[1], strength=0.32 * dt)
+            elif self.stage == 2 and self.walls[2].is_unlocked:
+                self._guide_towards_gap(self.walls[2], strength=0.38 * dt)
+
             # Gentle gravity inside maze
             self.ball_vy += 0.08 * dt
+
+            # Speed stabilization
+            spd = math.hypot(self.ball_vx, self.ball_vy)
+            if spd < 11.5:
+                self.ball_vx = (self.ball_vx / (spd + 1e-5)) * 12.5
+                self.ball_vy = (self.ball_vy / (spd + 1e-5)) * 12.5
+            elif spd > 17.5:
+                self.ball_vx = (self.ball_vx / spd) * 16.5
+                self.ball_vy = (self.ball_vy / spd) * 16.5
 
             dx = self.ball_x - self.center_x
             dy = self.ball_y - self.center_y
@@ -558,17 +609,22 @@ class NeonEscapeGame:
 
                 # 2. Wall 1 Inner Boundary
                 w1 = self.walls[0]
-                if dist + self.ball_radius >= w1.inner_radius and radial_vel > 0:
-                    ang_margin = math.asin(min(0.9, self.ball_radius / w1.inner_radius))
+                r1_wall = w1.get_radius(ball_angle)
+                r1_in = r1_wall - w1.half_thick
+                nx, ny = w1.get_normal(ball_angle)
+                norm_vel = self.ball_vx * nx + self.ball_vy * ny
+
+                if dist + self.ball_radius >= r1_in and norm_vel > 0:
+                    ang_margin = math.asin(min(0.9, self.ball_radius / r1_in))
                     if w1.is_angle_in_gap(ball_angle, margin_radians=ang_margin * 0.3):
                         # ENTER WALL 1 GAP!
                         self.stage = 0.5
                     else:
                         # Solid bounce off inner surface of Wall 1
-                        self.ball_x = self.center_x + norm_x * (w1.inner_radius - self.ball_radius)
-                        self.ball_y = self.center_y + norm_y * (w1.inner_radius - self.ball_radius)
+                        self.ball_x = self.center_x + norm_x * (r1_in - self.ball_radius)
+                        self.ball_y = self.center_y + norm_y * (r1_in - self.ball_radius)
                         note = self.base_notes[self.bounce_count % len(self.base_notes)] * self.ball["sound_pitch"]
-                        self._bounce_ball(norm_x, norm_y, radial_vel, t, note, w1.color)
+                        self._bounce_ball(nx, ny, norm_vel, t, note, w1.color)
 
             # -------------------------------------------------------------
             # STAGE 0.5: Transiting Wall 1 Gap
@@ -576,8 +632,11 @@ class NeonEscapeGame:
             elif self.stage == 0.5:
                 w1 = self.walls[0]
                 self._check_tip_collision(w1)
+                r1_wall = w1.get_radius(ball_angle)
+                r1_in = r1_wall - w1.half_thick
+                r1_out = r1_wall + w1.half_thick
 
-                if dist - self.ball_radius >= w1.outer_radius:
+                if dist - self.ball_radius >= r1_out:
                     # OFFICIALLY CLEARED WALL 1!
                     self.stage = 1
                     w1.close_gap()  # Permanently sealed shut!
@@ -586,7 +645,7 @@ class NeonEscapeGame:
                     self.audio_events.append((t, 680.0 * self.ball["sound_pitch"], True))
                     for _ in range(35):
                         self.particles.append(Particle(self.ball_x, self.ball_y, w1.color, speed_mult=2.0, radius=7.0))
-                elif dist + self.ball_radius <= w1.inner_radius and radial_vel < 0:
+                elif dist + self.ball_radius <= r1_in and radial_vel < 0:
                     self.stage = 0
 
             # -------------------------------------------------------------
@@ -595,25 +654,33 @@ class NeonEscapeGame:
             elif self.stage == 1:
                 w1 = self.walls[0]
                 w2 = self.walls[1]
+                r1_wall = w1.get_radius(ball_angle)
+                r1_out = r1_wall + w1.half_thick
+                nx1, ny1 = w1.get_normal(ball_angle)
+                norm_vel1 = self.ball_vx * nx1 + self.ball_vy * ny1
+
+                r2_wall = w2.get_radius(ball_angle)
+                r2_in = r2_wall - w2.half_thick
+                nx2, ny2 = w2.get_normal(ball_angle)
+                norm_vel2 = self.ball_vx * nx2 + self.ball_vy * ny2
 
                 # 1. Bounce off Outer Surface of Sealed Wall 1 (Cannot go back in!)
-                if dist - self.ball_radius <= w1.outer_radius and radial_vel < 0:
-                    self.ball_x = self.center_x + norm_x * (w1.outer_radius + self.ball_radius)
-                    self.ball_y = self.center_y + norm_y * (w1.outer_radius + self.ball_radius)
-                    self._bounce_ball(norm_x, norm_y, radial_vel, t, 440.0 * self.ball["sound_pitch"], w1.color)
+                if dist - self.ball_radius <= r1_out and norm_vel1 < 0:
+                    self.ball_x = self.center_x + norm_x * (r1_out + self.ball_radius)
+                    self.ball_y = self.center_y + norm_y * (r1_out + self.ball_radius)
+                    self._bounce_ball(nx1, ny1, norm_vel1, t, 440.0 * self.ball["sound_pitch"], w1.color)
 
                 # 2. Bounce or Escape through Inner Surface of Wall 2
-                elif dist + self.ball_radius >= w2.inner_radius and radial_vel > 0:
-                    ang_margin = math.asin(min(0.9, self.ball_radius / w2.inner_radius))
+                elif dist + self.ball_radius >= r2_in and norm_vel2 > 0:
+                    ang_margin = math.asin(min(0.9, self.ball_radius / r2_in))
                     if w2.is_angle_in_gap(ball_angle, margin_radians=ang_margin * 0.3):
                         # ENTER WALL 2 GAP!
                         self.stage = 1.5
                     else:
-                        # Solid bounce off inner surface of Wall 2
-                        self.ball_x = self.center_x + norm_x * (w2.inner_radius - self.ball_radius)
-                        self.ball_y = self.center_y + norm_y * (w2.inner_radius - self.ball_radius)
+                        self.ball_x = self.center_x + norm_x * (r2_in - self.ball_radius)
+                        self.ball_y = self.center_y + norm_y * (r2_in - self.ball_radius)
                         note = self.base_notes[(self.bounce_count * 2) % len(self.base_notes)] * self.ball["sound_pitch"]
-                        self._bounce_ball(norm_x, norm_y, radial_vel, t, note, w2.color)
+                        self._bounce_ball(nx2, ny2, norm_vel2, t, note, w2.color)
 
             # -------------------------------------------------------------
             # STAGE 1.5: Transiting Wall 2 Gap
@@ -621,8 +688,11 @@ class NeonEscapeGame:
             elif self.stage == 1.5:
                 w2 = self.walls[1]
                 self._check_tip_collision(w2)
+                r2_wall = w2.get_radius(ball_angle)
+                r2_in = r2_wall - w2.half_thick
+                r2_out = r2_wall + w2.half_thick
 
-                if dist - self.ball_radius >= w2.outer_radius:
+                if dist - self.ball_radius >= r2_out:
                     # OFFICIALLY CLEARED WALL 2!
                     self.stage = 2
                     w2.close_gap()  # Permanently sealed shut!
@@ -631,7 +701,7 @@ class NeonEscapeGame:
                     self.audio_events.append((t, 840.0 * self.ball["sound_pitch"], True))
                     for _ in range(40):
                         self.particles.append(Particle(self.ball_x, self.ball_y, w2.color, speed_mult=2.2, radius=7.0))
-                elif dist + self.ball_radius <= w2.inner_radius and radial_vel < 0:
+                elif dist + self.ball_radius <= r2_in and radial_vel < 0:
                     self.stage = 1
 
             # -------------------------------------------------------------
@@ -640,25 +710,33 @@ class NeonEscapeGame:
             elif self.stage == 2:
                 w2 = self.walls[1]
                 w3 = self.walls[2]
+                r2_wall = w2.get_radius(ball_angle)
+                r2_out = r2_wall + w2.half_thick
+                nx2, ny2 = w2.get_normal(ball_angle)
+                norm_vel2 = self.ball_vx * nx2 + self.ball_vy * ny2
+
+                r3_wall = w3.get_radius(ball_angle)
+                r3_in = r3_wall - w3.half_thick
+                nx3, ny3 = w3.get_normal(ball_angle)
+                norm_vel3 = self.ball_vx * nx3 + self.ball_vy * ny3
 
                 # 1. Bounce off Outer Surface of Sealed Wall 2
-                if dist - self.ball_radius <= w2.outer_radius and radial_vel < 0:
-                    self.ball_x = self.center_x + norm_x * (w2.outer_radius + self.ball_radius)
-                    self.ball_y = self.center_y + norm_y * (w2.outer_radius + self.ball_radius)
-                    self._bounce_ball(norm_x, norm_y, radial_vel, t, 580.0 * self.ball["sound_pitch"], w2.color)
+                if dist - self.ball_radius <= r2_out and norm_vel2 < 0:
+                    self.ball_x = self.center_x + norm_x * (r2_out + self.ball_radius)
+                    self.ball_y = self.center_y + norm_y * (r2_out + self.ball_radius)
+                    self._bounce_ball(nx2, ny2, norm_vel2, t, 580.0 * self.ball["sound_pitch"], w2.color)
 
                 # 2. Bounce or Escape through Inner Surface of Wall 3 (Narrowest gap!)
-                elif dist + self.ball_radius >= w3.inner_radius and radial_vel > 0:
-                    ang_margin = math.asin(min(0.9, self.ball_radius / w3.inner_radius))
+                elif dist + self.ball_radius >= r3_in and norm_vel3 > 0:
+                    ang_margin = math.asin(min(0.9, self.ball_radius / r3_in))
                     if w3.is_angle_in_gap(ball_angle, margin_radians=ang_margin * 0.3):
                         # ENTER FINAL ESCAPE GAP!
                         self.stage = 2.5
                     else:
-                        # Solid bounce off inner surface of Wall 3
-                        self.ball_x = self.center_x + norm_x * (w3.inner_radius - self.ball_radius)
-                        self.ball_y = self.center_y + norm_y * (w3.inner_radius - self.ball_radius)
+                        self.ball_x = self.center_x + norm_x * (r3_in - self.ball_radius)
+                        self.ball_y = self.center_y + norm_y * (r3_in - self.ball_radius)
                         note = self.base_notes[(self.bounce_count * 3) % len(self.base_notes)] * self.ball["sound_pitch"]
-                        self._bounce_ball(norm_x, norm_y, radial_vel, t, note, w3.color)
+                        self._bounce_ball(nx3, ny3, norm_vel3, t, note, w3.color)
 
             # -------------------------------------------------------------
             # STAGE 2.5: Transiting Wall 3 Gap (Final Climax!)
@@ -666,20 +744,23 @@ class NeonEscapeGame:
             elif self.stage == 2.5:
                 w3 = self.walls[2]
                 self._check_tip_collision(w3)
+                r3_wall = w3.get_radius(ball_angle)
+                r3_in = r3_wall - w3.half_thick
+                r3_out = r3_wall + w3.half_thick
 
-                if dist - self.ball_radius >= w3.outer_radius:
+                if dist - self.ball_radius >= r3_out:
                     # FINAL ESCAPE ACHIEVED!
                     self.stage = 3
                     self.escaped = True
                     self.escape_time = t
                     w3.close_gap()  # Wall 3 seals behind!
-                    self.banner_text = "FREEDOM! ESCAPED ALL NEON WALLS!"
+                    self.banner_text = f"FREEDOM! ESCAPED THE {self.geometry} MAZE!"
                     self.banner_timer = 120
                     self.audio_events.append((t, 990.0 * self.ball["sound_pitch"], True))
                     self.audio_events.append((t + 0.12, 1320.0 * self.ball["sound_pitch"], True))
                     for _ in range(80):
                         self.particles.append(Particle(self.ball_x, self.ball_y, (255, 255, 255), speed_mult=3.0, radius=8.0))
-                elif dist + self.ball_radius <= w3.inner_radius and radial_vel < 0:
+                elif dist + self.ball_radius <= r3_in and radial_vel < 0:
                     self.stage = 2
 
     def _draw_ball(self, surface, x, y):
@@ -801,13 +882,13 @@ class NeonEscapeGame:
         # 6. HEADER OVERLAYS
         # -------------------------------------------------------------
         style_clean = self.wall_style.replace("_", " ")
-        header_text = f"ESCAPE THE {style_clean} MAZE"
+        header_text = f"ESCAPE THE {self.geometry} MAZE"
         head_surf = self.font_title.render(header_text, True, (255, 255, 255))
         surface.blit(head_surf, head_surf.get_rect(center=(self.width // 2, 110)))
 
         # Dynamic status subtitle
         if self.stage < 1:
-            status_line = f"CHAMBER 1/3  |  BALL: {self.ball['name']}"
+            status_line = f"CHAMBER 1/3  |  STYLE: {style_clean}  |  {self.ball['name']}"
         elif self.stage < 2:
             status_line = f"CHAMBER 2/3  |  BOUNCES: {self.bounce_count}"
         elif self.stage < 3:
