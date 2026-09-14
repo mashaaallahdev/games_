@@ -143,9 +143,17 @@ class NeonEscapeGame:
         surface = pygame.Surface((self.width, self.height))
         surface.fill((8, 10, 22))
 
-        # Ambient decorative grid rings
+        # Ambient decorative grid rings & Center Core Bumper
         pygame.draw.circle(surface, (18, 24, 45), (self.center_x, self.center_y), 530, 2)
-        pygame.draw.circle(surface, (14, 18, 35), (self.center_x, self.center_y), 80, 1)
+        
+        # Center Core Glowing Bumper (Inner-most bounce wall)
+        core_radius = 48
+        core_glow = pygame.Surface((core_radius * 3, core_radius * 3), pygame.SRCALPHA)
+        pygame.draw.circle(core_glow, (255, 40, 150, 45), (int(core_radius * 1.5), int(core_radius * 1.5)), int(core_radius * 1.3))
+        surface.blit(core_glow, (int(self.center_x - core_radius * 1.5), int(self.center_y - core_radius * 1.5)))
+        pygame.draw.circle(surface, (20, 24, 45), (self.center_x, self.center_y), core_radius)
+        pygame.draw.circle(surface, (255, 40, 150), (self.center_x, self.center_y), core_radius, 4)
+        pygame.draw.circle(surface, (255, 255, 255), (self.center_x, self.center_y), core_radius // 2)
 
         # 1. Update & Draw Rings
         for ring in self.rings:
@@ -155,67 +163,78 @@ class NeonEscapeGame:
         # 2. Physics Update: Ball movement
         self.ball_x += self.ball_vx
         self.ball_y += self.ball_vy
-        # Gentle gravity
-        self.ball_vy += 0.10
+        # Gentle gravity drift
+        self.ball_vy += 0.08
 
         dx = self.ball_x - self.center_x
         dy = self.ball_y - self.center_y
         dist = math.hypot(dx, dy)
         ball_angle = math.atan2(dy, dx) % (2 * math.pi)
+        norm_x = dx / (dist + 1e-6)
+        norm_y = dy / (dist + 1e-6)
+        dot = self.ball_vx * norm_x + self.ball_vy * norm_y
 
-        # 3. Natural Collision & Gap Detection
-        if self.current_ring_level < len(self.rings):
-            active_ring = self.rings[self.current_ring_level]
-            min_r = active_ring.radius - active_ring.thickness / 2
-            max_r = active_ring.radius + active_ring.thickness / 2
+        # 3. Collision with Center Core (Inner Bumper)
+        if dist < core_radius + self.ball_radius and dot < 0:
+            # Bounce outward away from center!
+            self.ball_vx -= 2 * dot * norm_x
+            self.ball_vy -= 2 * dot * norm_y
+            self.ball_vx *= 1.01
+            self.ball_vy *= 1.01
+            self.bounce_count += 1
+            self.audio_events.append((t, 520.0, False))
+            for _ in range(12):
+                self.particles.append(Particle(self.ball_x, self.ball_y, (255, 40, 150), speed_mult=1.3))
 
-            # Check collision with the boundary of current ring
-            if (min_r - self.ball_radius) <= dist <= (max_r + self.ball_radius):
-                norm_x = dx / (dist + 1e-6)
-                norm_y = dy / (dist + 1e-6)
-                dot = self.ball_vx * norm_x + self.ball_vy * norm_y
+        # 4. Two-Way Ring Collision: Both Inner Wall and Outer Wall Bouncing
+        for idx, ring in enumerate(self.rings):
+            r_inner = ring.radius - ring.thickness / 2
+            r_outer = ring.radius + ring.thickness / 2
 
-                # If moving outward
-                if dot > 0:
-                    # Check if ball hits the OPEN GAP
-                    if active_ring.is_in_gap(ball_angle):
-                        # ESCAPED THROUGH THE GAP!
-                        self.current_ring_level += 1
-                        self.stage_notification = f"{active_ring.name} CLEARED!"
+            # A) Hitting the INNER wall (moving outward)
+            if (r_inner - self.ball_radius) <= dist <= (r_inner + self.ball_radius) and dot > 0:
+                if ring.is_in_gap(ball_angle):
+                    # Passes through gap into next layer!
+                    if idx >= self.current_ring_level:
+                        self.current_ring_level = idx + 1
+                        self.stage_notification = f"{ring.name} CLEARED!"
                         self.notification_timer = 60
-
-                        # Celebration sound for breakthrough
                         break_freq = 660.0 + self.current_ring_level * 150
                         self.audio_events.append((t, break_freq, True))
-
-                        # Breakthrough burst particles
-                        for _ in range(30):
-                            self.particles.append(Particle(self.ball_x, self.ball_y, active_ring.color, speed_mult=1.8))
-
+                        for _ in range(25):
+                            self.particles.append(Particle(self.ball_x, self.ball_y, ring.color, speed_mult=1.8))
                         if self.current_ring_level >= len(self.rings):
-                            # Completely escaped all rings!
                             self.escaped = True
                             self.escape_time = t
                             self.audio_events.append((t + 0.15, 990.0, True))
-                            for _ in range(70):
-                                self.particles.append(Particle(self.ball_x, self.ball_y, (0, 255, 200), speed_mult=2.8))
-                    else:
-                        # Solid wall collision -> Bounce back inside!
-                        self.ball_vx -= 2 * dot * norm_x
-                        self.ball_vy -= 2 * dot * norm_y
+                            for _ in range(60):
+                                self.particles.append(Particle(self.ball_x, self.ball_y, (0, 255, 200), speed_mult=2.5))
+                else:
+                    # Solid bounce off INNER wall back towards center!
+                    self.ball_vx -= 2 * dot * norm_x
+                    self.ball_vy -= 2 * dot * norm_y
+                    self.ball_vx *= 1.01
+                    self.ball_vy *= 1.01
+                    self.bounce_count += 1
+                    note_idx = (self.bounce_count * 2) % len(self.base_notes)
+                    freq = self.base_notes[note_idx]
+                    self.audio_events.append((t, freq, False))
+                    for _ in range(12):
+                        self.particles.append(Particle(self.ball_x, self.ball_y, ring.color))
 
-                        # Micro acceleration to keep energy high
-                        self.ball_vx *= 1.01
-                        self.ball_vy *= 1.01
-
-                        self.bounce_count += 1
-                        note_idx = (self.bounce_count * 2) % len(self.base_notes)
-                        freq = self.base_notes[note_idx] * (1.0 + min(self.bounce_count * 0.01, 0.7))
-                        self.audio_events.append((t, freq, False))
-
-                        # Spark particles on impact
-                        for _ in range(14):
-                            self.particles.append(Particle(self.ball_x, self.ball_y, active_ring.color))
+            # B) Hitting the OUTER wall (moving inward back toward center)
+            elif (r_outer - self.ball_radius) <= dist <= (r_outer + self.ball_radius) and dot < 0:
+                if not ring.is_in_gap(ball_angle):
+                    # Solid bounce off OUTER wall back outward!
+                    self.ball_vx -= 2 * dot * norm_x
+                    self.ball_vy -= 2 * dot * norm_y
+                    self.ball_vx *= 1.01
+                    self.ball_vy *= 1.01
+                    self.bounce_count += 1
+                    freq = 380.0 + (idx * 90)
+                    self.audio_events.append((t, freq, False))
+                    for _ in range(12):
+                        self.particles.append(Particle(self.ball_x, self.ball_y, ring.color, speed_mult=1.2))
 
         # Check outer boundary escape
         if dist > 550 and not self.escaped:
