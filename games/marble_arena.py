@@ -184,16 +184,19 @@ class MarbleArenaGame:
             pygame.draw.circle(surface, (70, 90, 130), (px, py), 9)
             pygame.draw.circle(surface, (180, 210, 255), (px, py), 6)
 
-        # 4. Finish Line / Podium Gate
-        pygame.draw.line(surface, (255, 220, 50), (60, self.finish_line_y), (self.width - 60, self.finish_line_y), 6)
-        finish_text = self.font_sub.render("--- FINISH LINE ---", True, (255, 220, 50))
-        surface.blit(finish_text, finish_text.get_rect(center=(self.width // 2, self.finish_line_y - 20)))
+        # 4. Elimination Line (Marbles that drop first are OUT)
+        pygame.draw.line(surface, (255, 60, 60), (60, self.finish_line_y), (self.width - 60, self.finish_line_y), 6)
+        elim_text = self.font_sub.render("--- DANGER: ELIMINATION ZONE (OUT!) ---", True, (255, 80, 80))
+        surface.blit(elim_text, elim_text.get_rect(center=(self.width // 2, self.finish_line_y - 20)))
+
+        # Dynamic gravity calibrated so marbles survive across the designated video duration
+        base_gravity = max(0.08, min(0.24, 2.8 / (self.duration_sec * 0.85)))
 
         # 5. Physics Update for Marbles
         for m in self.marbles:
             if not m.finished:
-                # Gravity
-                m.vy += 0.22
+                # Gravity & air resistance
+                m.vy += base_gravity
                 m.vx *= 0.99
                 m.vy *= 0.99
 
@@ -224,7 +227,10 @@ class MarbleArenaGame:
                         if dot < 0:
                             m.vx -= 1.7 * dot * nx
                             m.vy -= 1.7 * dot * ny
-                            m.vx += random.uniform(-0.8, 0.8)
+                            m.vx += random.uniform(-1.0, 1.0)
+                            # Extra upward bounce to keep marbles fighting on pegs
+                            if random.random() < 0.25:
+                                m.vy -= random.uniform(0.5, 2.0)
 
                             # Trigger pleasant peg chime
                             freq = 300 + (py / self.height) * 500
@@ -235,18 +241,13 @@ class MarbleArenaGame:
                     if sp.check_collision(m):
                         self.audio_events.append((t, 650.0, False))
 
-                # Check Finish Line
+                # Elimination Check: Falling below elimination line eliminates the marble
                 if m.y >= self.finish_line_y:
                     m.finished = True
                     m.finish_time = t
-                    self.finishers.append(m)
-                    m.rank = len(self.finishers)
-                    # Celebration fanfare sound for winner
-                    if m.rank == 1:
-                        self.audio_events.append((t, 880.0, True))
-                        self.audio_events.append((t + 0.15, 1100.0, True))
-                    else:
-                        self.audio_events.append((t, 520.0, False))
+                    self.finishers.append(m)  # Added in order of elimination
+                    # Elimination drop sound
+                    self.audio_events.append((t, 180.0 + len(self.finishers) * 20, False))
 
                 m.update()
 
@@ -258,30 +259,46 @@ class MarbleArenaGame:
                 pygame.draw.circle(surf, (r, g, b, alpha), (m.radius, m.radius), int(m.radius * 0.75))
                 surface.blit(surf, (int(tx - m.radius), int(ty - m.radius)))
 
-            # Render Marble
-            pygame.draw.circle(surface, m.color, (int(m.x), int(m.y)), m.radius)
-            pygame.draw.circle(surface, (255, 255, 255), (int(m.x - 4), int(m.y - 4)), int(m.radius * 0.35))
-            pygame.draw.circle(surface, (20, 20, 30), (int(m.x), int(m.y)), m.radius, 2)
+            # Render Marble (only if still alive or just crossed)
+            if not m.finished or (m.finished and t - m.finish_time < 0.5):
+                pygame.draw.circle(surface, m.color, (int(m.x), int(m.y)), m.radius)
+                pygame.draw.circle(surface, (255, 255, 255), (int(m.x - 4), int(m.y - 4)), int(m.radius * 0.35))
+                pygame.draw.circle(surface, (20, 20, 30), (int(m.x), int(m.y)), m.radius, 2)
 
-            # Name tag
-            txt = self.font_name.render(m.name[:3], True, (255, 255, 255))
-            surface.blit(txt, txt.get_rect(center=(int(m.x), int(m.y - 25))))
+                # Name tag
+                txt = self.font_name.render(m.name[:3], True, (255, 255, 255))
+                surface.blit(txt, txt.get_rect(center=(int(m.x), int(m.y - 25))))
 
-        # 6. Header & Real-Time Leaderboard
-        title = self.font_title.render("MARBLE ELIMINATION RACE", True, (255, 255, 255))
+        # Alive marbles calculation
+        alive_marbles = [m for m in self.marbles if not m.finished]
+        progress = frame_idx / self.total_frames
+
+        # 6. Header & Real-Time Survival Tracker
+        title = self.font_title.render("MARBLE SURVIVAL ELIMINATION", True, (255, 255, 255))
         surface.blit(title, title.get_rect(center=(self.width // 2, 80)))
 
-        sub = self.font_sub.render("PICK YOUR COLOR! WHO WINS? COMMENT BELOW!", True, (0, 255, 220))
+        status_text = f"LAST COLOR STANDING WINS!  |  ALIVE: {len(alive_marbles)} / 8"
+        sub = self.font_sub.render(status_text, True, (0, 255, 220))
         surface.blit(sub, sub.get_rect(center=(self.width // 2, 140)))
 
-        # 6. Winner Announcement Card (Dramatic Victory Screen)
-        if len(self.finishers) > 0:
-            winner = self.finishers[0]
+        # 7. Winner Announcement Card (ONLY appears in the final 22% of video or when 1 survivor remains near end)
+        show_winner = (progress >= 0.76) or (len(alive_marbles) <= 1 and progress >= 0.65)
+        if show_winner:
+            # Ranking: The LAST marble to survive is the 1st place champion!
+            # Marbles still alive are ranked highest (lowest y / highest on board),
+            # followed by the most recently eliminated marbles.
+            remaining = sorted(alive_marbles, key=lambda m: m.y)
+            eliminated_reversed = list(reversed(self.finishers))
+            full_ranking = remaining + eliminated_reversed
 
-            # Spawn continuous confetti fireworks after first finisher
-            for _ in range(4):
+            winner = full_ranking[0]
+            p2 = full_ranking[1] if len(full_ranking) > 1 else None
+            p3 = full_ranking[2] if len(full_ranking) > 2 else None
+
+            # Spawn continuous confetti fireworks
+            for _ in range(5):
                 cx = random.randint(100, self.width - 100)
-                cy = random.randint(600, 1400)
+                cy = random.randint(500, 1300)
                 confetti_colors = [(255, 50, 50), (50, 150, 255), (50, 255, 100), (255, 220, 50), (255, 100, 255), (0, 255, 255)]
                 self.particles.append(Particle(cx, cy, random.choice(confetti_colors), speed_mult=1.8))
 
@@ -292,26 +309,24 @@ class MarbleArenaGame:
             card_y = 660
 
             card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            pygame.draw.rect(card_surf, (15, 18, 35, 240), (0, 0, card_w, card_h), border_radius=28)
+            pygame.draw.rect(card_surf, (15, 18, 35, 242), (0, 0, card_w, card_h), border_radius=28)
             pygame.draw.rect(card_surf, winner.color, (0, 0, card_w, card_h), width=5, border_radius=28)
             # Inner accent glow
             pygame.draw.rect(card_surf, (255, 255, 255, 60), (4, 4, card_w - 8, card_h - 8), width=2, border_radius=26)
             surface.blit(card_surf, (card_x, card_y))
 
             # Header Banner
-            crown_txt = self.font_sub.render("--- CHAMPION DECLARED ---", True, (255, 215, 0))
+            crown_txt = self.font_sub.render("--- LAST COLOR STANDING ---", True, (255, 215, 0))
             surface.blit(crown_txt, crown_txt.get_rect(center=(self.width // 2, card_y + 45)))
 
             # Big Winner Announcement
-            win_name_surf = self.font_big.render(f"{winner.name} WINS!", True, winner.color)
+            win_name_surf = self.font_big.render(f"{winner.name} IS THE WINNER!", True, winner.color)
             surface.blit(win_name_surf, win_name_surf.get_rect(center=(self.width // 2, card_y + 115)))
 
             # Podium Standings
-            p1_name = self.finishers[0].name if len(self.finishers) >= 1 else "..."
-            p2_name = self.finishers[1].name if len(self.finishers) >= 2 else "..."
-            p3_name = self.finishers[2].name if len(self.finishers) >= 3 else "..."
-
-            p1_txt = self.font_podium.render(f"1ST PLACE: {p1_name}", True, (255, 220, 50))
+            p1_txt = self.font_podium.render(f"1ST PLACE (CHAMPION): {winner.name}", True, (255, 220, 50))
+            p2_name = p2.name if p2 else "..."
+            p3_name = p3.name if p3 else "..."
             p2_txt = self.font_podium.render(f"2ND PLACE: {p2_name}", True, (210, 220, 230))
             p3_txt = self.font_podium.render(f"3RD PLACE: {p3_name}", True, (205, 127, 50))
 
@@ -320,7 +335,7 @@ class MarbleArenaGame:
             surface.blit(p3_txt, p3_txt.get_rect(center=(self.width // 2, card_y + 300)))
 
             # Comment Call to Action (High engagement bait)
-            cta_txt = self.font_cta.render("DID YOUR COLOR WIN? COMMENT BELOW!", True, (0, 255, 220))
+            cta_txt = self.font_cta.render("DID YOUR COLOR SURVIVE? COMMENT BELOW!", True, (0, 255, 220))
             surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, card_y + 375)))
 
         # Update & Draw Particles (Confetti)
