@@ -220,6 +220,14 @@ class MarbleArenaGame:
         self.particles = []
         self.audio_events = []
 
+        self.winner_start_frame = None
+        self.winner_duration_sec = 3.0
+        self.winner_frames_total = int(self.winner_duration_sec * self.fps)
+        self.is_finished = False
+        self.winner = None
+        self.podium_p2 = None
+        self.podium_p3 = None
+
         self.font_title = pygame.font.SysFont("Arial", 46, bold=True)
         self.font_sub = pygame.font.SysFont("Arial", 28, bold=True)
         self.font_name = pygame.font.SysFont("Arial", 22, bold=True)
@@ -362,7 +370,18 @@ class MarbleArenaGame:
 
         # 7. Esports Live Survival HUD
         alive_marbles = [m for m in self.marbles if not m.finished]
-        progress = frame_idx / self.total_frames
+
+        # Elimination Winner Decision: Last Color Standing!
+        if len(alive_marbles) <= 1 and not self.is_finished:
+            self.is_finished = True
+            self.winner_start_frame = frame_idx
+            remaining = sorted(alive_marbles, key=lambda m: m.y)
+            full_ranking = remaining + list(reversed(self.finishers))
+            self.winner = full_ranking[0]
+            self.podium_p2 = full_ranking[1] if len(full_ranking) > 1 else None
+            self.podium_p3 = full_ranking[2] if len(full_ranking) > 2 else None
+            self.audio_events.append((t, 880.0, True))
+            self.audio_events.append((t + 0.14, 1174.0, True))
 
         title = self.font_title.render("MARBLE SURVIVAL TOURNAMENT", True, (255, 255, 255))
         surface.blit(title, title.get_rect(center=(self.width // 2, 75)))
@@ -371,55 +390,60 @@ class MarbleArenaGame:
         sub = self.font_sub.render(sub_text, True, (0, 255, 220))
         surface.blit(sub, sub.get_rect(center=(self.width // 2, 135)))
 
-        # 8. Dramatic Winner Card (Shown strictly in the climax / final 22% of the video)
-        show_winner = (progress >= 0.76) or (len(alive_marbles) <= 1 and progress >= 0.65)
-        if show_winner:
-            remaining = sorted(alive_marbles, key=lambda m: m.y)
-            full_ranking = remaining + list(reversed(self.finishers))
-            winner = full_ranking[0]
-            p2 = full_ranking[1] if len(full_ranking) > 1 else None
-            p3 = full_ranking[2] if len(full_ranking) > 2 else None
+        # 8. Dramatic Winner Card (Shown for 3.0 seconds after winner is decided)
+        if self.is_finished and self.winner is not None:
+            frames_winner = frame_idx - self.winner_start_frame
+            win_ratio = min(1.0, frames_winner / self.winner_frames_total)
 
             # Confetti fireworks
-            for _ in range(5):
+            if random.random() < 0.40:
                 cx = random.randint(100, self.width - 100)
-                cy = random.randint(500, 1300)
+                cy = random.randint(400, 1300)
                 confetti_colors = [(255, 60, 60), (60, 150, 255), (60, 255, 120), (255, 220, 50), (220, 80, 255), (0, 255, 255)]
-                self.particles.append(Particle(cx, cy, random.choice(confetti_colors), speed_mult=1.8))
+                for _ in range(6):
+                    self.particles.append(Particle(cx, cy, random.choice(confetti_colors), speed_mult=1.8))
 
-            # Glassmorphic Card
-            card_w = 920
+            # Glassmorphic Card with entry pop animation
+            card_w = 940
             card_h = 440
             card_x = (self.width - card_w) // 2
             card_y = 660
+            anim_offset = max(0, int((1.0 - min(1.0, frames_winner / 12.0)) * 50))
+            draw_y = card_y + anim_offset
 
             card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
             pygame.draw.rect(card_surf, (14, 16, 32, 245), (0, 0, card_w, card_h), border_radius=28)
-            pygame.draw.rect(card_surf, winner.color, (0, 0, card_w, card_h), width=5, border_radius=28)
-            pygame.draw.rect(card_surf, (255, 255, 255, 60), (4, 4, card_w - 8, card_h - 8), width=2, border_radius=26)
-            surface.blit(card_surf, (card_x, card_y))
+            pygame.draw.rect(card_surf, (255, 215, 0), (0, 0, card_w, card_h), width=5, border_radius=28)
+            pygame.draw.rect(card_surf, self.winner.color, (4, 4, card_w - 8, card_h - 8), width=3, border_radius=26)
+            pygame.draw.rect(card_surf, (255, 255, 255, 60), (8, 8, card_w - 16, card_h - 16), width=1, border_radius=24)
+            surface.blit(card_surf, (card_x, draw_y))
 
             # Card Header
             crown_txt = self.font_sub.render("--- LAST COLOR STANDING ---", True, (255, 215, 0))
-            surface.blit(crown_txt, crown_txt.get_rect(center=(self.width // 2, card_y + 45)))
+            surface.blit(crown_txt, crown_txt.get_rect(center=(self.width // 2, draw_y + 45)))
 
             # Winner text
-            win_name_surf = self.font_big.render(f"{winner.name} IS THE WINNER!", True, winner.color)
-            surface.blit(win_name_surf, win_name_surf.get_rect(center=(self.width // 2, card_y + 115)))
+            win_name_surf = self.font_big.render(f"{self.winner.name} IS THE WINNER!", True, self.winner.color)
+            surface.blit(win_name_surf, win_name_surf.get_rect(center=(self.width // 2, draw_y + 115)))
 
             # Standings
-            p1_txt = self.font_podium.render(f"1ST PLACE (CHAMPION): {winner.name}", True, (255, 220, 50))
-            p2_name = p2.name if p2 else "..."
-            p3_name = p3.name if p3 else "..."
+            p1_txt = self.font_podium.render(f"1ST PLACE (CHAMPION): {self.winner.name}", True, (255, 220, 50))
+            p2_name = self.podium_p2.name if self.podium_p2 else "..."
+            p3_name = self.podium_p3.name if self.podium_p3 else "..."
             p2_txt = self.font_podium.render(f"2ND PLACE: {p2_name}", True, (210, 220, 230))
             p3_txt = self.font_podium.render(f"3RD PLACE: {p3_name}", True, (205, 127, 50))
 
-            surface.blit(p1_txt, p1_txt.get_rect(center=(self.width // 2, card_y + 190)))
-            surface.blit(p2_txt, p2_txt.get_rect(center=(self.width // 2, card_y + 245)))
-            surface.blit(p3_txt, p3_txt.get_rect(center=(self.width // 2, card_y + 300)))
+            surface.blit(p1_txt, p1_txt.get_rect(center=(self.width // 2, draw_y + 190)))
+            surface.blit(p2_txt, p2_txt.get_rect(center=(self.width // 2, draw_y + 245)))
+            surface.blit(p3_txt, p3_txt.get_rect(center=(self.width // 2, draw_y + 300)))
 
             cta_txt = self.font_cta.render("DID YOUR COLOR SURVIVE? COMMENT BELOW!", True, (0, 255, 220))
-            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, card_y + 375)))
+            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, draw_y + 375)))
+
+            progress = 0.85 + 0.15 * win_ratio
+        else:
+            elim_ratio = len(self.finishers) / max(1, len(self.marbles) - 1)
+            progress = min(0.85, elim_ratio * 0.85)
 
         # Progress bar
         bar_w = 800
@@ -433,27 +457,46 @@ class MarbleArenaGame:
 
     def generate_video(self, output_path: Path):
         output_path = Path(output_path)
-        print(f"[MarbleArena] Generating {self.duration_sec}s video ({self.total_frames} frames)...")
+        print(f"[MarbleArena] Generating dynamic video: plays until last marble standing + 3s winner popup...")
 
         renderer = VideoRenderer(output_path=output_path, width=self.width, height=self.height, fps=self.fps)
         renderer.start()
 
-        for frame_idx in range(self.total_frames):
+        frame_idx = 0
+        total_winner_frames = int(self.winner_duration_sec * self.fps)
+        max_safety_frames = int(60.0 * self.fps)
+
+        while True:
             frame_bytes = self.render_frame(frame_idx)
             renderer.write_frame(frame_bytes)
 
-            if frame_idx % 120 == 0 or frame_idx == self.total_frames - 1:
-                percent = int((frame_idx + 1) / self.total_frames * 100)
-                print(f"  -> Rendering progress: {percent}% ({frame_idx+1}/{self.total_frames})")
+            if self.is_finished and self.winner_start_frame is not None:
+                if frame_idx - self.winner_start_frame >= total_winner_frames:
+                    frame_idx += 1
+                    break
+
+            if frame_idx >= max_safety_frames:
+                print(f"[MarbleArena] Safety cutoff reached at {frame_idx} frames.")
+                break
+
+            if frame_idx % 120 == 0:
+                print(f"  -> Rendering progress: frame {frame_idx} ({frame_idx / self.fps:.1f}s)...")
+
+            frame_idx += 1
+
+        total_frames = frame_idx
+        actual_duration_sec = total_frames / self.fps
+        print(f"[MarbleArena] Tournament finished & 3s winner popup completed! Duration: {actual_duration_sec:.2f}s ({total_frames} frames).")
 
         print("[MarbleArena] Synthesizing procedural audio...")
-        audio = ProceduralAudioEngine(duration_sec=self.duration_sec)
+        audio = ProceduralAudioEngine(duration_sec=actual_duration_sec)
         audio.add_subtle_background_pulse(bpm=130.0, volume=0.15)
 
         for (timestamp, freq, is_finish) in self.audio_events:
-            audio.add_tone(start_time=timestamp, freq=freq, duration=0.18, volume=0.55)
-            if is_finish:
-                audio.add_explosion(start_time=timestamp, volume=0.8)
+            if timestamp <= actual_duration_sec:
+                audio.add_tone(start_time=timestamp, freq=freq, duration=0.18, volume=0.55)
+                if is_finish:
+                    audio.add_explosion(start_time=timestamp, volume=0.8)
 
         temp_wav = output_path.with_suffix(".temp.wav")
         audio.export_wav(temp_wav)

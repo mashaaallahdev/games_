@@ -121,6 +121,12 @@ class PlinkoMultiplierGame:
         self.audio_events = []
         self.total_damage = 0
 
+        self.winner_start_frame = None
+        self.winner_duration_sec = 3.0
+        self.winner_frames_total = int(self.winner_duration_sec * self.fps)
+        self.is_finished = False
+        self.spawn_stop_time = max(9.0, self.duration_sec - 4.0)
+
         self.font_title = pygame.font.SysFont("Arial", 44, bold=True)
         self.font_sub = pygame.font.SysFont("Arial", 28, bold=True)
         self.font_gate = pygame.font.SysFont("Arial", 22, bold=True)
@@ -133,8 +139,8 @@ class PlinkoMultiplierGame:
         surface = pygame.Surface((self.width, self.height))
         surface.fill((10, 12, 24))
 
-        # Periodic ball spawner from top (drops extra balls at intervals)
-        if frame_idx % 45 == 0 and frame_idx < self.total_frames * 0.6:
+        # Periodic ball spawner from top (drops extra balls until spawn_stop_time)
+        if frame_idx % 45 == 0 and t < self.spawn_stop_time and not self.is_finished:
             self.balls.append(Ball(self.width // 2 + random.randint(-60, 60), 200, random.uniform(-1, 1), 1.5))
 
         # 1. Render Gates
@@ -237,11 +243,68 @@ class PlinkoMultiplierGame:
         title = self.font_title.render("EXPONENTIAL MULTIPLIER RUSH", True, (255, 255, 255))
         surface.blit(title, title.get_rect(center=(self.width // 2, 80)))
 
+        # Check Stage Completion: All balls cleared after spawn stop, or all bricks destroyed
+        alive_bricks = [br for br in self.bricks if br.alive]
+        if ((t >= self.spawn_stop_time and len(self.balls) == 0) or len(alive_bricks) == 0) and not self.is_finished:
+            self.is_finished = True
+            self.winner_start_frame = frame_idx
+            self.audio_events.append((t, 880.0, True))
+            self.audio_events.append((t + 0.14, 1320.0, True))
+
         sub = self.font_sub.render(f"ACTIVE BALLS: {len(self.balls)}   |   DAMAGE: {self.total_damage}", True, (0, 255, 200))
         surface.blit(sub, sub.get_rect(center=(self.width // 2, 140)))
 
+        # Final Victory / Results Screen (Shown for 3.0 seconds after stage completion)
+        if self.is_finished and self.winner_start_frame is not None:
+            frames_winner = frame_idx - self.winner_start_frame
+            win_ratio = min(1.0, frames_winner / self.winner_frames_total)
+
+            # Celebration spark fireworks
+            if random.random() < 0.40:
+                for _ in range(5):
+                    fx = random.randint(120, self.width - 120)
+                    fy = random.randint(400, 1300)
+                    self.sparks.append(Spark(fx, fy, random.choice([(255, 60, 120), (0, 255, 200), (255, 220, 50), (180, 80, 255)])))
+
+            card_w = 940
+            card_h = 420
+            card_x = (self.width - card_w) // 2
+            card_y = 680
+            anim_offset = max(0, int((1.0 - min(1.0, frames_winner / 12.0)) * 50))
+            draw_y = card_y + anim_offset
+
+            card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
+            pygame.draw.rect(card_surf, (14, 16, 30, 245), (0, 0, card_w, card_h), border_radius=28)
+            pygame.draw.rect(card_surf, (255, 215, 0), (0, 0, card_w, card_h), width=5, border_radius=28)
+            pygame.draw.rect(card_surf, (0, 230, 255), (4, 4, card_w - 8, card_h - 8), width=3, border_radius=26)
+            pygame.draw.rect(card_surf, (255, 255, 255, 60), (8, 8, card_w - 16, card_h - 16), width=1, border_radius=24)
+            surface.blit(card_surf, (card_x, draw_y))
+
+            # Header
+            head_txt = self.font_banner.render("--- STAGE COMPLETE ---", True, (255, 215, 0))
+            surface.blit(head_txt, head_txt.get_rect(center=(self.width // 2, draw_y + 45)))
+
+            # Big Score Announcement
+            score_txt = self.font_big.render(f"SCORE: {self.total_damage * 10:,}", True, (0, 255, 200))
+            surface.blit(score_txt, score_txt.get_rect(center=(self.width // 2, draw_y + 120)))
+
+            # Stats line
+            stats_line = self.font_sub.render(f"TOTAL BRICKS PULVERIZED: {self.total_damage}  |  MAX MULTIPLIER: x5", True, (255, 255, 255))
+            surface.blit(stats_line, stats_line.get_rect(center=(self.width // 2, draw_y + 205)))
+
+            rating_line = self.font_sub.render("RANK: LEGENDARY CHAOS", True, (255, 220, 50))
+            surface.blit(rating_line, rating_line.get_rect(center=(self.width // 2, draw_y + 255)))
+
+            # Call to Action
+            cta_txt = self.font_banner.render("DID YOU ENJOY THIS ASMR? COMMENT BELOW!", True, (255, 60, 160))
+            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, draw_y + 340)))
+
+            progress = 0.85 + 0.15 * win_ratio
+        else:
+            spawn_progress = min(1.0, t / self.spawn_stop_time)
+            progress = min(0.85, spawn_progress * 0.85)
+
         # Progress bar
-        progress = frame_idx / self.total_frames
         bar_w = 800
         bar_h = 14
         bx = (self.width - bar_w) // 2
@@ -249,69 +312,50 @@ class PlinkoMultiplierGame:
         pygame.draw.rect(surface, (40, 40, 60), (bx, by, bar_w, bar_h), border_radius=7)
         pygame.draw.rect(surface, (0, 230, 255), (bx, by, int(bar_w * progress), bar_h), border_radius=7)
 
-        # Final Victory / Results Screen (Triggered in final 20% of the video)
-        if progress > 0.78:
-            # Celebration spark fireworks
-            for _ in range(5):
-                fx = random.randint(120, self.width - 120)
-                fy = random.randint(500, 1300)
-                self.sparks.append(Spark(fx, fy, random.choice([(255, 60, 120), (0, 255, 200), (255, 220, 50), (180, 80, 255)])))
-
-            card_w = 920
-            card_h = 420
-            card_x = (self.width - card_w) // 2
-            card_y = 680
-
-            card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            pygame.draw.rect(card_surf, (14, 16, 30, 242), (0, 0, card_w, card_h), border_radius=28)
-            pygame.draw.rect(card_surf, (0, 230, 255), (0, 0, card_w, card_h), width=5, border_radius=28)
-            pygame.draw.rect(card_surf, (255, 255, 255, 60), (4, 4, card_w - 8, card_h - 8), width=2, border_radius=26)
-            surface.blit(card_surf, (card_x, card_y))
-
-            # Header
-            head_txt = self.font_banner.render("--- STAGE COMPLETE ---", True, (255, 215, 0))
-            surface.blit(head_txt, head_txt.get_rect(center=(self.width // 2, card_y + 45)))
-
-            # Big Score Announcement
-            score_txt = self.font_big.render(f"SCORE: {self.total_damage * 10:,}", True, (0, 255, 200))
-            surface.blit(score_txt, score_txt.get_rect(center=(self.width // 2, card_y + 120)))
-
-            # Stats line
-            stats_line = self.font_sub.render(f"TOTAL BRICKS PULVERIZED: {self.total_damage}  |  MAX MULTIPLIER: x5", True, (255, 255, 255))
-            surface.blit(stats_line, stats_line.get_rect(center=(self.width // 2, card_y + 205)))
-
-            rating_line = self.font_sub.render("RANK: LEGENDARY CHAOS", True, (255, 220, 50))
-            surface.blit(rating_line, rating_line.get_rect(center=(self.width // 2, card_y + 255)))
-
-            # Call to Action
-            cta_txt = self.font_banner.render("DID YOU ENJOY THIS ASMR? COMMENT BELOW!", True, (255, 60, 160))
-            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, card_y + 340)))
-
         return pygame.image.tostring(surface, "RGB")
 
     def generate_video(self, output_path: Path):
         output_path = Path(output_path)
-        print(f"[PlinkoMultiplier] Generating {self.duration_sec}s video ({self.total_frames} frames)...")
+        print(f"[PlinkoMultiplier] Generating dynamic video: plays until stage complete + 3s winner popup...")
 
         renderer = VideoRenderer(output_path=output_path, width=self.width, height=self.height, fps=self.fps)
         renderer.start()
 
-        for frame_idx in range(self.total_frames):
+        frame_idx = 0
+        total_winner_frames = int(self.winner_duration_sec * self.fps)
+        max_safety_frames = int(60.0 * self.fps)
+
+        while True:
             frame_bytes = self.render_frame(frame_idx)
             renderer.write_frame(frame_bytes)
 
-            if frame_idx % 120 == 0 or frame_idx == self.total_frames - 1:
-                percent = int((frame_idx + 1) / self.total_frames * 100)
-                print(f"  -> Rendering progress: {percent}% ({frame_idx+1}/{self.total_frames})")
+            if self.is_finished and self.winner_start_frame is not None:
+                if frame_idx - self.winner_start_frame >= total_winner_frames:
+                    frame_idx += 1
+                    break
+
+            if frame_idx >= max_safety_frames:
+                print(f"[PlinkoMultiplier] Safety cutoff reached at {frame_idx} frames.")
+                break
+
+            if frame_idx % 120 == 0:
+                print(f"  -> Rendering progress: frame {frame_idx} ({frame_idx / self.fps:.1f}s)...")
+
+            frame_idx += 1
+
+        total_frames = frame_idx
+        actual_duration_sec = total_frames / self.fps
+        print(f"[PlinkoMultiplier] Stage finished & 3s winner popup completed! Duration: {actual_duration_sec:.2f}s ({total_frames} frames).")
 
         print("[PlinkoMultiplier] Synthesizing procedural audio...")
-        audio = ProceduralAudioEngine(duration_sec=self.duration_sec)
+        audio = ProceduralAudioEngine(duration_sec=actual_duration_sec)
         audio.add_subtle_background_pulse(bpm=128.0, volume=0.15)
 
         for (timestamp, freq, is_shatter) in self.audio_events:
-            audio.add_tone(start_time=timestamp, freq=freq, duration=0.12, volume=0.45)
-            if is_shatter:
-                audio.add_explosion(start_time=timestamp, volume=0.85)
+            if timestamp <= actual_duration_sec:
+                audio.add_tone(start_time=timestamp, freq=freq, duration=0.12, volume=0.45)
+                if is_shatter:
+                    audio.add_explosion(start_time=timestamp, volume=0.85)
 
         temp_wav = output_path.with_suffix(".temp.wav")
         audio.export_wav(temp_wav)

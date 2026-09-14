@@ -456,10 +456,11 @@ class NeonEscapeGame:
             MovingNeonWall(radius=radii[1], thickness=18, gap_degrees=gaps[1], rot_speed=-0.019 * rot_dir, color=colors[1], name=f"{self.geometry} 2", style=self.wall_style, shape=self.geometry),
             MovingNeonWall(radius=radii[2], thickness=20, gap_degrees=gaps[2], rot_speed=0.015 * rot_dir, color=colors[2], name=f"{self.geometry} 3", style=self.wall_style, shape=self.geometry),
         ]
-        # Paced portal unlock schedules to guarantee maximum suspense and timely escape
-        self.walls[0].unlock_time = self.duration_sec * 0.20
-        self.walls[1].unlock_time = self.duration_sec * 0.48
-        self.walls[2].unlock_time = self.duration_sec * 0.72
+        # Paced portal unlock schedules to guarantee suspenseful gameplay and timely escape
+        target_game_time = max(10.0, self.duration_sec - 3.0)
+        self.walls[0].unlock_time = target_game_time * 0.22
+        self.walls[1].unlock_time = target_game_time * 0.52
+        self.walls[2].unlock_time = target_game_time * 0.78
 
         # Stage State Machine:
         # 0   : Inside Chamber 0 (between Core and Wall 1)
@@ -472,6 +473,8 @@ class NeonEscapeGame:
         self.stage = 0.0
         self.escaped = False
         self.escape_time = None
+        self.escape_frame = None
+        self.winner_duration_sec = 3.0
         self.bounce_count = 0
 
         # Audio and Visual FX
@@ -753,6 +756,8 @@ class NeonEscapeGame:
                     self.stage = 3
                     self.escaped = True
                     self.escape_time = t
+                    if self.escape_frame is None:
+                        self.escape_frame = frame_idx
                     w3.close_gap()  # Wall 3 seals behind!
                     self.banner_text = f"FREEDOM! ESCAPED THE {self.geometry} MAZE!"
                     self.banner_timer = 120
@@ -906,36 +911,66 @@ class NeonEscapeGame:
             surface.blit(banner_surf, banner_surf.get_rect(center=(self.width // 2, 220)))
 
         # -------------------------------------------------------------
-        # 7. BOTTOM CELEBRATION CARD
-        # Appears once escaped or displays real-time bounce telemetry
+        # 7. WINNER CELEBRATION POPUP MODAL (Displays for 3.0 seconds after escape)
         # -------------------------------------------------------------
+        total_winner_frames = int(self.winner_duration_sec * self.fps)
         if self.escaped:
+            if self.escape_frame is None:
+                self.escape_frame = frame_idx
+            frames_escaped = frame_idx - self.escape_frame
+            win_ratio = min(1.0, frames_escaped / total_winner_frames)
+
+            # Continuous celebration fireworks during the 3.0s celebration
+            if random.random() < 0.35:
+                cx = random.randint(150, self.width - 150)
+                cy = random.randint(300, 1400)
+                for _ in range(8):
+                    self.particles.append(Particle(cx, cy, random.choice(self.theme["colors"]), speed_mult=2.2))
+
+            # Glassmorphic Winner Popup Card
             card_w = 940
-            card_h = 240
+            card_h = 360
             card_x = (self.width - card_w) // 2
-            card_y = 1520
+            card_y = 1420
+
+            # Popup entrance animation (quick 12-frame pop up)
+            anim_offset = max(0, int((1.0 - min(1.0, frames_escaped / 12.0)) * 60))
+            draw_y = card_y + anim_offset
 
             card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            pygame.draw.rect(card_surf, (12, 16, 32, 235), (0, 0, card_w, card_h), border_radius=24)
-            pygame.draw.rect(card_surf, self.ball["body_color"], (0, 0, card_w, card_h), width=4, border_radius=24)
-            pygame.draw.rect(card_surf, (255, 255, 255, 50), (3, 3, card_w - 6, card_h - 6), width=2, border_radius=22)
-            surface.blit(card_surf, (card_x, card_y))
+            pygame.draw.rect(card_surf, (12, 16, 32, 245), (0, 0, card_w, card_h), border_radius=28)
+            pygame.draw.rect(card_surf, (255, 215, 0), (0, 0, card_w, card_h), width=4, border_radius=28)
+            pygame.draw.rect(card_surf, self.ball["body_color"], (4, 4, card_w - 8, card_h - 8), width=3, border_radius=26)
+            pygame.draw.rect(card_surf, (255, 255, 255, 40), (8, 8, card_w - 16, card_h - 16), width=1, border_radius=24)
+            surface.blit(card_surf, (card_x, draw_y))
 
+            # Header crown banner
+            crown_txt = self.font_sub.render("--- ★ WINNER ANNOUNCEMENT ★ ---", True, (255, 215, 0))
+            surface.blit(crown_txt, crown_txt.get_rect(center=(self.width // 2, draw_y + 45)))
+
+            # Huge Winner text
             win_txt = self.font_big.render(f"ESCAPE COMPLETE! {self.ball['name']} WON!", True, self.ball["body_color"])
-            surface.blit(win_txt, win_txt.get_rect(center=(self.width // 2, card_y + 55)))
+            surface.blit(win_txt, win_txt.get_rect(center=(self.width // 2, draw_y + 115)))
 
-            b_info = self.font_ui.render(f"TOTAL BOUNCES: {self.bounce_count}  |  ALL 3 WALLS CLEARED!", True, (255, 255, 255))
-            surface.blit(b_info, b_info.get_rect(center=(self.width // 2, card_y + 115)))
+            # Maze & Telemetry line
+            b_info = self.font_ui.render(f"CLEARED ALL 3 {self.geometry} WALLS  |  BOUNCES: {self.bounce_count}", True, (255, 255, 255))
+            surface.blit(b_info, b_info.get_rect(center=(self.width // 2, draw_y + 185)))
 
-            cta_txt = self.font_sub.render("DID YOU PREDICT THE ESCAPE? COMMENT BELOW!", True, (255, 220, 50))
-            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, card_y + 180)))
+            time_info = self.font_sub.render(f"BREAKOUT TIME: {self.escape_time:.1f}s  |  STATUS: FREEDOM ACHIEVED!", True, (0, 240, 255))
+            surface.blit(time_info, time_info.get_rect(center=(self.width // 2, draw_y + 240)))
+
+            cta_txt = self.font_sub.render("DID YOU PREDICT THE ESCAPE? COMMENT BELOW! 👇", True, (255, 220, 50))
+            surface.blit(cta_txt, cta_txt.get_rect(center=(self.width // 2, draw_y + 305)))
+
+            # Bottom progress bar smoothly finishes during 3s celebration
+            progress = 0.85 + 0.15 * win_ratio
         else:
             stats_text = f"BOUNCES: {self.bounce_count}   |   BOUNCING ON INNER & OUTER WALLS"
             bot_surf = self.font_ui.render(stats_text, True, (255, 200, 80))
             surface.blit(bot_surf, bot_surf.get_rect(center=(self.width // 2, 1750)))
+            progress = min(0.85, (self.stage / 3.0) * 0.65 + (t / max(10.0, self.duration_sec)) * 0.20)
 
         # Bottom timeline progress bar
-        progress = frame_idx / self.total_frames
         bar_w = 800
         bar_h = 14
         bx = (self.width - bar_w) // 2
@@ -947,27 +982,46 @@ class NeonEscapeGame:
 
     def generate_video(self, output_path: Path):
         output_path = Path(output_path)
-        print(f"[NeonEscape] Generating {self.duration_sec}s video ({self.total_frames} frames)...")
+        print(f"[NeonEscape] Generating dynamic video: plays until escape + 3s winner popup...")
 
         renderer = VideoRenderer(output_path=output_path, width=self.width, height=self.height, fps=self.fps)
         renderer.start()
 
-        for frame_idx in range(self.total_frames):
+        frame_idx = 0
+        total_winner_frames = int(self.winner_duration_sec * self.fps)
+        max_safety_frames = int(60.0 * self.fps)
+
+        while True:
             frame_bytes = self.render_frame(frame_idx)
             renderer.write_frame(frame_bytes)
 
-            if frame_idx % 120 == 0 or frame_idx == self.total_frames - 1:
-                percent = int((frame_idx + 1) / self.total_frames * 100)
-                print(f"  -> Rendering progress: {percent}% ({frame_idx+1}/{self.total_frames})")
+            if self.escaped and self.escape_frame is not None:
+                if frame_idx - self.escape_frame >= total_winner_frames:
+                    frame_idx += 1
+                    break
+
+            if frame_idx >= max_safety_frames:
+                print(f"[NeonEscape] Safety cutoff reached at {frame_idx} frames.")
+                break
+
+            if frame_idx % 120 == 0:
+                print(f"  -> Rendering progress: frame {frame_idx} ({frame_idx / self.fps:.1f}s)...")
+
+            frame_idx += 1
+
+        total_frames = frame_idx
+        actual_duration_sec = total_frames / self.fps
+        print(f"[NeonEscape] Game finished & 3s winner popup completed! Duration: {actual_duration_sec:.2f}s ({total_frames} frames).")
 
         print("[NeonEscape] Synthesizing procedural bounce audio...")
-        audio = ProceduralAudioEngine(duration_sec=self.duration_sec)
+        audio = ProceduralAudioEngine(duration_sec=actual_duration_sec)
         audio.add_subtle_background_pulse(bpm=125.0, volume=0.18)
 
         for (timestamp, freq, is_breakthrough) in self.audio_events:
-            audio.add_tone(start_time=timestamp, freq=freq, duration=0.20, volume=0.65)
-            if is_breakthrough:
-                audio.add_explosion(start_time=timestamp, volume=0.75)
+            if timestamp <= actual_duration_sec:
+                audio.add_tone(start_time=timestamp, freq=freq, duration=0.20, volume=0.65)
+                if is_breakthrough:
+                    audio.add_explosion(start_time=timestamp, volume=0.75)
 
         temp_wav = output_path.with_suffix(".temp.wav")
         audio.export_wav(temp_wav)
