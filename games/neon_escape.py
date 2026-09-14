@@ -16,7 +16,7 @@ class Particle:
         speed = random.uniform(2, 9) * speed_mult
         self.vx = math.cos(angle) * speed
         self.vy = math.sin(angle) * speed
-        self.life = 1.0  # 1.0 to 0.0
+        self.life = 1.0
         self.decay = random.uniform(0.025, 0.05)
         self.radius = random.uniform(3, 7)
 
@@ -35,42 +35,29 @@ class Particle:
             pygame.draw.circle(surf, (r, g, b, alpha), (int(self.radius), int(self.radius)), int(self.radius))
             surface.blit(surf, (int(self.x - self.radius), int(self.y - self.radius)))
 
-class Segment:
-    def __init__(self, start_angle, end_angle, health=2):
-        self.start_angle = start_angle
-        self.end_angle = end_angle
-        self.health = health
-        self.max_health = health
-        self.alive = True
-
-    def hit(self):
-        self.health -= 1
-        if self.health <= 0:
-            self.alive = False
-            return True  # Shattered
-        return False
-
-class Ring:
-    def __init__(self, radius, thickness, num_segments, rot_speed, base_color):
+class RotatingRing:
+    """
+    A continuous glowing neon ring with ONE clearly visible open escape gap.
+    The gap rotates continuously. If the ball hits the solid wall, it bounces.
+    If it hits the open gap, it passes straight through to the next layer!
+    """
+    def __init__(self, radius, thickness, gap_size_degrees, rot_speed, color, name="RING"):
         self.radius = radius
         self.thickness = thickness
-        self.num_segments = num_segments
+        self.gap_radians = math.radians(gap_size_degrees)
         self.rot_speed = rot_speed
         self.rotation = random.uniform(0, 2 * math.pi)
-        self.base_color = base_color
-        self.segments = []
-        
-        seg_angle = (2 * math.pi) / num_segments
-        gap = 0.08  # Radians gap between segments
-        for i in range(num_segments):
-            s_ang = i * seg_angle + gap / 2
-            e_ang = (i + 1) * seg_angle - gap / 2
-            # 2 hits for middle ring, 3 hits for outer ring
-            hp = random.choice([2, 3])
-            self.segments.append(Segment(s_ang, e_ang, health=hp))
+        self.color = color
+        self.name = name
 
     def update(self):
         self.rotation = (self.rotation + self.rot_speed) % (2 * math.pi)
+
+    def is_in_gap(self, angle):
+        """Checks if a given angle (0 to 2pi) falls inside the open escape gap."""
+        # Gap spans from self.rotation to self.rotation + self.gap_radians
+        rel_ang = (angle - self.rotation) % (2 * math.pi)
+        return rel_ang <= self.gap_radians
 
     def draw(self, surface, center_x, center_y):
         rect = pygame.Rect(
@@ -79,23 +66,26 @@ class Ring:
             int(self.radius * 2),
             int(self.radius * 2)
         )
-        for seg in self.segments:
-            if not seg.alive:
-                continue
-            
-            # Color shifts to warmer alert color as health decreases
-            if seg.health == 1:
-                col = (255, 100, 100) # Warning red/orange
-            elif seg.health == 2:
-                col = self.base_color
-            else:
-                col = (120, 220, 255)
+        # Solid arc is from gap_end to gap_start
+        solid_start = (self.rotation + self.gap_radians) % (2 * math.pi)
+        solid_end = self.rotation % (2 * math.pi)
 
-            start = (seg.start_angle + self.rotation) % (2 * math.pi)
-            end = (seg.end_angle + self.rotation) % (2 * math.pi)
+        # Draw main glowing neon arc
+        pygame.draw.arc(surface, self.color, rect, solid_start, solid_end, self.thickness)
 
-            # Draw outer glow arc
-            pygame.draw.arc(surface, col, rect, start, end, self.thickness)
+        # Draw glowing rounded cap caps at gap edges for crisp neon look
+        # Edge 1 (gap start)
+        e1_x = center_x + self.radius * math.cos(self.rotation)
+        e1_y = center_y + self.radius * math.sin(self.rotation)
+        pygame.draw.circle(surface, (255, 255, 255), (int(e1_x), int(e1_y)), self.thickness // 2)
+        pygame.draw.circle(surface, self.color, (int(e1_x), int(e1_y)), self.thickness // 2 + 2, 2)
+
+        # Edge 2 (gap end)
+        gap_end = self.rotation + self.gap_radians
+        e2_x = center_x + self.radius * math.cos(gap_end)
+        e2_y = center_y + self.radius * math.sin(gap_end)
+        pygame.draw.circle(surface, (255, 255, 255), (int(e2_x), int(e2_y)), self.thickness // 2)
+        pygame.draw.circle(surface, self.color, (int(e2_x), int(e2_y)), self.thickness // 2 + 2, 2)
 
 
 class NeonEscapeGame:
@@ -111,33 +101,38 @@ class NeonEscapeGame:
         self.center_y = height // 2
 
         # Physics ball setup
-        self.ball_x = float(self.center_x + random.randint(-40, 40))
-        self.ball_y = float(self.center_y + random.randint(-40, 40))
-        speed = 10.0
-        angle = random.uniform(0.2, math.pi * 1.8)
+        self.ball_x = float(self.center_x + random.randint(-30, 30))
+        self.ball_y = float(self.center_y + random.randint(-30, 30))
+        speed = 11.5
+        angle = random.uniform(0.3, math.pi * 1.7)
         self.ball_vx = math.cos(angle) * speed
         self.ball_vy = math.sin(angle) * speed
         self.ball_radius = 16
         self.ball_color = (0, 255, 200)
 
-        # Concentric Rings (Inner, Middle, Outer)
+        # 3 Concentric Rings with clearly visible escape gaps
+        # Level 0 = inside ring 1, Level 1 = inside ring 2, Level 2 = inside ring 3, Level 3 = ESCAPED
+        gap_bonus = 15 if duration_sec <= 15 else 0
         self.rings = [
-            Ring(radius=220, thickness=16, num_segments=6, rot_speed=0.015, base_color=(0, 220, 255)),
-            Ring(radius=340, thickness=18, num_segments=8, rot_speed=-0.012, base_color=(180, 80, 255)),
-            Ring(radius=460, thickness=20, num_segments=10, rot_speed=0.009, base_color=(255, 50, 180)),
+            RotatingRing(radius=200, thickness=20, gap_size_degrees=65 + gap_bonus, rot_speed=0.018, color=(0, 220, 255), name="INNER RING"),
+            RotatingRing(radius=330, thickness=22, gap_size_degrees=60 + gap_bonus, rot_speed=-0.014, color=(200, 75, 255), name="MIDDLE RING"),
+            RotatingRing(radius=460, thickness=24, gap_size_degrees=55 + gap_bonus, rot_speed=0.011, color=(255, 50, 160), name="OUTER RING"),
         ]
 
+        self.current_ring_level = 0  # 0: in ring 1, 1: in ring 2, 2: in ring 3, 3: escaped!
         self.particles = []
         self.trail = []
         self.bounce_count = 0
         self.escaped = False
+        self.escape_time = None
+        self.stage_notification = "FIND THE ESCAPE GAP!"
+        self.notification_timer = 0
 
-        # Audio event collector: (timestamp, freq, is_shatter)
+        # Audio event collector: (timestamp, freq, is_breakthrough)
         self.audio_events = []
-        # Musical scale (A minor pentatonic / ascending frequencies)
         self.base_notes = [220, 246.94, 261.63, 293.66, 329.63, 392.00, 440.00, 523.25, 587.33, 659.25, 783.99, 880.00]
 
-        # Font setup (use default if custom not present)
+        # Font setup
         self.font_title = pygame.font.SysFont("Arial", 46, bold=True)
         self.font_ui = pygame.font.SysFont("Arial", 32, bold=True)
         self.font_big = pygame.font.SysFont("Arial", 62, bold=True)
@@ -146,14 +141,13 @@ class NeonEscapeGame:
     def render_frame(self, frame_idx):
         t = frame_idx / self.fps
         surface = pygame.Surface((self.width, self.height))
-        # Sleek dark cyber background with subtle gradient
         surface.fill((8, 10, 22))
 
-        # Ambient decorative grid or circle markers
-        pygame.draw.circle(surface, (18, 24, 45), (self.center_x, self.center_y), 520, 2)
-        pygame.draw.circle(surface, (14, 18, 35), (self.center_x, self.center_y), 100, 1)
+        # Ambient decorative grid rings
+        pygame.draw.circle(surface, (18, 24, 45), (self.center_x, self.center_y), 530, 2)
+        pygame.draw.circle(surface, (14, 18, 35), (self.center_x, self.center_y), 80, 1)
 
-        # 1. Update rings
+        # 1. Update & Draw Rings
         for ring in self.rings:
             ring.update()
             ring.draw(surface, self.center_x, self.center_y)
@@ -161,74 +155,72 @@ class NeonEscapeGame:
         # 2. Physics Update: Ball movement
         self.ball_x += self.ball_vx
         self.ball_y += self.ball_vy
-        # Gravity / micro drift towards center or down
-        self.ball_vy += 0.08
+        # Gentle gravity
+        self.ball_vy += 0.10
 
         dx = self.ball_x - self.center_x
         dy = self.ball_y - self.center_y
-        dist = math.sqrt(dx * dx + dy * dy)
+        dist = math.hypot(dx, dy)
         ball_angle = math.atan2(dy, dx) % (2 * math.pi)
 
-        # 3. Collision with rings
-        for r_idx, ring in enumerate(self.rings):
-            min_r = ring.radius - ring.thickness / 2
-            max_r = ring.radius + ring.thickness / 2
+        # 3. Natural Collision & Gap Detection
+        if self.current_ring_level < len(self.rings):
+            active_ring = self.rings[self.current_ring_level]
+            min_r = active_ring.radius - active_ring.thickness / 2
+            max_r = active_ring.radius + active_ring.thickness / 2
 
+            # Check collision with the boundary of current ring
             if (min_r - self.ball_radius) <= dist <= (max_r + self.ball_radius):
-                # Check which segment covers ball_angle
-                rel_angle = (ball_angle - ring.rotation) % (2 * math.pi)
-                for seg in ring.segments:
-                    if seg.alive and seg.start_angle <= rel_angle <= seg.end_angle:
-                        # Collision detected!
-                        # Calculate normal vector
-                        norm_x = dx / (dist + 1e-6)
-                        norm_y = dy / (dist + 1e-6)
+                norm_x = dx / (dist + 1e-6)
+                norm_y = dy / (dist + 1e-6)
+                dot = self.ball_vx * norm_x + self.ball_vy * norm_y
 
-                        # Dot product of velocity and normal
-                        dot = self.ball_vx * norm_x + self.ball_vy * norm_y
-                        if (dist < ring.radius and dot > 0) or (dist > ring.radius and dot < 0):
-                            self.ball_vx -= 2 * dot * norm_x
-                            self.ball_vy -= 2 * dot * norm_y
+                # If moving outward
+                if dot > 0:
+                    # Check if ball hits the OPEN GAP
+                    if active_ring.is_in_gap(ball_angle):
+                        # ESCAPED THROUGH THE GAP!
+                        self.current_ring_level += 1
+                        self.stage_notification = f"{active_ring.name} CLEARED!"
+                        self.notification_timer = 60
 
-                            # Speed increase to raise tension
-                            self.ball_vx *= 1.015
-                            self.ball_vy *= 1.015
-                            
-                            self.bounce_count += 1
-                            # In final 30% of video, ball power increases to guarantee thrilling breakout
-                            if frame_idx > self.total_frames * 0.65:
-                                seg.health = 1
-                            shattered = seg.hit()
+                        # Celebration sound for breakthrough
+                        break_freq = 660.0 + self.current_ring_level * 150
+                        self.audio_events.append((t, break_freq, True))
 
-                            # Audio frequency rises with bounce count
-                            note_idx = (self.bounce_count * 2) % len(self.base_notes)
-                            freq = self.base_notes[note_idx] * (1.0 + min(self.bounce_count * 0.01, 0.8))
-                            self.audio_events.append((t, freq, shattered))
+                        # Breakthrough burst particles
+                        for _ in range(30):
+                            self.particles.append(Particle(self.ball_x, self.ball_y, active_ring.color, speed_mult=1.8))
 
-                            # Spawn impact particles
-                            for _ in range(16 if not shattered else 35):
-                                p_color = (255, 240, 100) if shattered else ring.base_color
-                                self.particles.append(Particle(self.ball_x, self.ball_y, p_color, speed_mult=1.5 if shattered else 1.0))
-                            break
+                        if self.current_ring_level >= len(self.rings):
+                            # Completely escaped all rings!
+                            self.escaped = True
+                            self.escape_time = t
+                            self.audio_events.append((t + 0.15, 990.0, True))
+                            for _ in range(70):
+                                self.particles.append(Particle(self.ball_x, self.ball_y, (0, 255, 200), speed_mult=2.8))
+                    else:
+                        # Solid wall collision -> Bounce back inside!
+                        self.ball_vx -= 2 * dot * norm_x
+                        self.ball_vy -= 2 * dot * norm_y
 
-        # Climax breakout trigger in last 20% of video if not yet escaped
-        if frame_idx > self.total_frames * 0.78 and not self.escaped:
-            # Force outward breakout
-            out_ang = math.atan2(dy, dx)
-            self.ball_vx = math.cos(out_ang) * 22
-            self.ball_vy = math.sin(out_ang) * 22
-            self.escaped = True
-            self.audio_events.append((t, 990.0, True))
-            for _ in range(80):
-                self.particles.append(Particle(self.ball_x, self.ball_y, (0, 255, 180), speed_mult=2.5))
+                        # Micro acceleration to keep energy high
+                        self.ball_vx *= 1.01
+                        self.ball_vy *= 1.01
+
+                        self.bounce_count += 1
+                        note_idx = (self.bounce_count * 2) % len(self.base_notes)
+                        freq = self.base_notes[note_idx] * (1.0 + min(self.bounce_count * 0.01, 0.7))
+                        self.audio_events.append((t, freq, False))
+
+                        # Spark particles on impact
+                        for _ in range(14):
+                            self.particles.append(Particle(self.ball_x, self.ball_y, active_ring.color))
 
         # Check outer boundary escape
         if dist > 550 and not self.escaped:
             self.escaped = True
-            # Massive celebration explosion
-            self.audio_events.append((t, 990.0, True))
-            for _ in range(80):
-                self.particles.append(Particle(self.ball_x, self.ball_y, (0, 255, 180), speed_mult=2.5))
+            self.escape_time = t
 
         # 4. Trail update & render
         self.trail.append((self.ball_x, self.ball_y))
@@ -245,10 +237,10 @@ class NeonEscapeGame:
                 surface.blit(surf, (int(tx - tr_radius), int(ty - tr_radius)))
 
         # 5. Draw Ball with glowing bloom
-        # Outer glow
         glow_surf = pygame.Surface((self.ball_radius * 4, self.ball_radius * 4), pygame.SRCALPHA)
-        pygame.draw.circle(glow_surf, (*self.ball_color, 70), (self.ball_radius * 2, self.ball_radius * 2), self.ball_radius * 2)
+        pygame.draw.circle(glow_surf, (*self.ball_color, 75), (self.ball_radius * 2, self.ball_radius * 2), self.ball_radius * 2)
         surface.blit(glow_surf, (int(self.ball_x - self.ball_radius * 2), int(self.ball_y - self.ball_radius * 2)))
+
         # Inner solid core
         pygame.draw.circle(surface, (255, 255, 255), (int(self.ball_x), int(self.ball_y)), self.ball_radius - 3)
         pygame.draw.circle(surface, self.ball_color, (int(self.ball_x), int(self.ball_y)), self.ball_radius, 3)
@@ -260,27 +252,30 @@ class NeonEscapeGame:
             if p.life <= 0:
                 self.particles.remove(p)
 
-        # 7. Cinematic UI Overlay (Headers & Stats)
-        # Header Box
-        header_surf = self.font_title.render("ESCAPE THE NEON MAZE", True, (255, 255, 255))
-        h_rect = header_surf.get_rect(center=(self.width // 2, 160))
-        surface.blit(header_surf, h_rect)
+        # 7. Cinematic UI Overlays
+        header_surf = self.font_title.render("ESCAPE THE NEON CIRCLE", True, (255, 255, 255))
+        surface.blit(header_surf, header_surf.get_rect(center=(self.width // 2, 140)))
 
-        sub_surf = self.font_ui.render("CAN IT BREAK OUT? WATCH TILL END!", True, (0, 255, 220))
-        s_rect = sub_surf.get_rect(center=(self.width // 2, 220))
-        surface.blit(sub_surf, s_rect)
+        # Live Level Tracker
+        level_label = f"CURRENT LAYER: {min(self.current_ring_level + 1, 3)} / 3" if not self.escaped else "STATUS: ESCAPED!"
+        sub_surf = self.font_ui.render(f"{level_label}  |  BOUNCES: {self.bounce_count}", True, (0, 255, 220))
+        surface.blit(sub_surf, sub_surf.get_rect(center=(self.width // 2, 200)))
+
+        # Stage breakthrough notification
+        if self.notification_timer > 0:
+            self.notification_timer -= 1
+            note_surf = self.font_ui.render(self.stage_notification, True, (255, 220, 50))
+            surface.blit(note_surf, note_surf.get_rect(center=(self.width // 2, 260)))
 
         # Stats Bar (Bottom)
-        status_label = "ESCAPED!" if self.escaped else "IN PROGRESS"
+        status_label = "ESCAPED!" if self.escaped else "FINDING THE GAP..."
         stats_text = f"BOUNCES: {self.bounce_count}   |   STATUS: {status_label}"
         color_stat = (50, 255, 120) if self.escaped else (255, 200, 80)
         bot_surf = self.font_ui.render(stats_text, True, color_stat)
-        b_rect = bot_surf.get_rect(center=(self.width // 2, 1750))
-        surface.blit(bot_surf, b_rect)
+        surface.blit(bot_surf, bot_surf.get_rect(center=(self.width // 2, 1750)))
 
-        # Dramatic Escape Celebration Card
+        # Dramatic Escape Celebration Card (Shown when fully escaped in climax)
         if self.escaped:
-            # Continuous celebratory fireworks
             for _ in range(4):
                 fx = random.randint(150, self.width - 150)
                 fy = random.randint(500, 1300)
@@ -292,7 +287,7 @@ class NeonEscapeGame:
             card_y = 750
 
             card_surf = pygame.Surface((card_w, card_h), pygame.SRCALPHA)
-            pygame.draw.rect(card_surf, (12, 16, 32, 240), (0, 0, card_w, card_h), border_radius=28)
+            pygame.draw.rect(card_surf, (12, 16, 32, 242), (0, 0, card_w, card_h), border_radius=28)
             pygame.draw.rect(card_surf, (0, 255, 200), (0, 0, card_w, card_h), width=5, border_radius=28)
             pygame.draw.rect(card_surf, (255, 255, 255, 60), (4, 4, card_w - 8, card_h - 8), width=2, border_radius=26)
             surface.blit(card_surf, (card_x, card_y))
@@ -306,7 +301,7 @@ class NeonEscapeGame:
             surface.blit(win_txt, win_txt.get_rect(center=(self.width // 2, card_y + 125)))
 
             # Stats line
-            b_info = self.font_ui.render(f"TOTAL BOUNCES: {self.bounce_count}  |  STATUS: WINNER!", True, (255, 255, 255))
+            b_info = self.font_ui.render(f"TOTAL BOUNCES: {self.bounce_count}  |  ALL 3 GAPS FOUND!", True, (255, 255, 255))
             surface.blit(b_info, b_info.get_rect(center=(self.width // 2, card_y + 215)))
 
             # Engagement Call to action
@@ -343,10 +338,10 @@ class NeonEscapeGame:
         audio = ProceduralAudioEngine(duration_sec=self.duration_sec)
         audio.add_subtle_background_pulse(bpm=125.0, volume=0.18)
 
-        for (timestamp, freq, shattered) in self.audio_events:
-            audio.add_tone(start_time=timestamp, freq=freq, duration=0.22, volume=0.65)
-            if shattered:
-                audio.add_explosion(start_time=timestamp, volume=0.7)
+        for (timestamp, freq, is_breakthrough) in self.audio_events:
+            audio.add_tone(start_time=timestamp, freq=freq, duration=0.20, volume=0.65)
+            if is_breakthrough:
+                audio.add_explosion(start_time=timestamp, volume=0.75)
 
         temp_wav = output_path.with_suffix(".temp.wav")
         audio.export_wav(temp_wav)
