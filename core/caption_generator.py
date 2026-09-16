@@ -26,21 +26,21 @@ GAME_CAPTION_TEMPLATES = {
     },
     "marble_arena": {
         "hooks": [
-            "Pick your color NOW before the race ends! 🏁🎯",
-            "Which color will survive the final elimination? 🏆⚡",
-            "The comeback at the end was INSANE! 😱🔥",
-            "Who are you rooting for? Comment your pick! 👇",
-            "This obstacle course shows zero mercy! 💀🛑",
-            "Did your favorite color win or get knocked out? 🥊"
+            "Represent your country! Who will survive the final elimination? 🌍🏁",
+            "Can your nation take 1st place in the World Cup Marble Arena? 🏆⚡",
+            "The comeback for this country was INSANE! 😱🔥",
+            "Pick your country NOW before the race ends! 🏁🎯",
+            "This obstacle course shows zero mercy to these countries! 💀🛑",
+            "Did your country make the podium or get knocked out? 🥊"
         ],
         "questions": [
-            "Which color did you choose? Let me know in the comments! 💬",
-            "Who had the biggest clutch moment in this round? 👑",
-            "Tell me your favorite color and see if it wins next time! ✨"
+            "Which country are you rooting for? Drop your flag below! 👇",
+            "Did your country survive? Represent in the comments! 💬",
+            "Tell me your nation and see if they win the next race! 👑"
         ],
         "hashtags": [
-            "#marblerace", "#elimination", "#gaming", "#reels", "#fbreels",
-            "#tournament", "#viral", "#fyp", "#competition", "#physics",
+            "#countryrace", "#worldcup", "#marblerace", "#flags", "#tournament",
+            "#gaming", "#reels", "#fbreels", "#viral", "#fyp", "#competition",
             "#challenge", "#gamereels", "#predict", "#whowins"
         ]
     },
