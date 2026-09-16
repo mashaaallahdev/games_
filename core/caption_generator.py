@@ -46,21 +46,21 @@ GAME_CAPTION_TEMPLATES = {
     },
     "plinko_multiplier": {
         "hooks": [
-            "Wait for the x10 multiplier flood... Absolute chaos! 🤯💣",
-            "From 1 ball to 1,000 in 15 seconds! Pure ASMR 🤤✨",
-            "Can the multiplier break the final boss block? 🧱💥",
-            "Listen to that satisfying particle destruction 🎧🔊",
-            "Watch the numbers explode! Exponential growth is crazy 📈🔥"
+            "5 countries, 5x multiplier! Which country will break their block first? 🌍💣",
+            "Watch the x5 chain reaction explode across the board! 😱🔥",
+            "When your country hits that 5x multiplier... Pure satisfaction! 🤤✨",
+            "Can your nation survive the ultimate Plinko destruction battle? 🏆⚡",
+            "The comeback in the last 10 seconds was UNREAL! 🤯💥"
         ],
         "questions": [
-            "What was the highest multiplier hit? Comment below! 👇",
-            "Is there anything more satisfying than this? 🤤",
-            "Drop a 🔥 if you love exponential growth games!"
+            "Which country are you rooting for? Drop your flag below! 👇",
+            "Did your country win or get eliminated? Comment your flag! 💬",
+            "Drop your country code to see them in the next Plinko battle! 👑"
         ],
         "hashtags": [
-            "#plinko", "#satisfying", "#asmr", "#oddlysatisfying", "#reels",
-            "#viral", "#gaming", "#exponential", "#physics", "#fbreels",
-            "#trending", "#particlefx", "#satisfyingvideo"
+            "#plinko", "#countrybattle", "#worldcup", "#marblerace", "#multiplier",
+            "#asmr", "#oddlysatisfying", "#viral", "#fbreels", "#gaming",
+            "#satisfying", "#reels", "#physics", "#challenge", "#whowins"
         ]
     }
 }
