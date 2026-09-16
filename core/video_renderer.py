@@ -46,16 +46,25 @@ class VideoRenderer:
     def write_frame(self, frame_bytes: bytes):
         """Pipes a single raw RGB frame to FFmpeg."""
         if self.process and self.process.stdin:
-            self.process.stdin.write(frame_bytes)
+            try:
+                self.process.stdin.write(frame_bytes)
+            except (BrokenPipeError, IOError):
+                pass
 
     def finish_video_only(self):
-        """Closes stdin and waits for video encoding to finish."""
+        """Waits for video encoding to finish and closes pipe."""
         if self.process:
-            self.process.stdin.close()
-            _, stderr = self.process.communicate()
-            if self.process.returncode != 0:
-                print(f"FFmpeg error: {stderr.decode('utf-8', errors='ignore')}")
-            self.process = None
+            try:
+                if self.process.stdin and self.process.stdin.closed:
+                    self.process.stdin = None
+                _, stderr = self.process.communicate()
+                if self.process.returncode != 0:
+                    err_msg = stderr.decode('utf-8', errors='ignore') if stderr else ''
+                    print(f"FFmpeg error: {err_msg}")
+            except Exception as e:
+                print(f"Video encoding error: {e}")
+            finally:
+                self.process = None
 
     def finalize_with_audio(self, wav_path: Path):
         """Muxes the generated video with the synthesized audio track into final MP4."""
